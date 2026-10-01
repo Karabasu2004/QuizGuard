@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Quiz, Question, Participant, ThemeColor } from '../types';
+import { Quiz, Question, ThemeColor } from '../types';
 import { getSavedQuiz, applyGlobalTheme, subscribeToMessages, supabase } from '../supabase';
 import { ShieldAlert, CheckCircle, AlertTriangle, Maximize, Clock, Trophy } from 'lucide-react';
 
 interface StudentPortalProps {
   quizId?: string;
+  quizIdFromUrl?: string;
   onExit?: () => void;
 }
 
-export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId, onExit }) => {
-  const [quizId, setQuizId] = useState<string>(propQuizId || '');
+export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId, quizIdFromUrl, onExit }) => {
+  const [resolvedQuizId, setResolvedQuizId] = useState<string>('');
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [loadingQuiz, setLoadingQuiz] = useState<boolean>(true);
   const [name, setName] = useState<string>('');
@@ -19,21 +20,23 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [timeLeft, setTimeLeft] = useState<number>(30);
   const [strikes, setStrikes] = useState<number>(0);
-  const [violations, setViolations] = useState<string[]>([]);
+  const [violations, setViolations] = useState<Array<{ timestamp: string; message: string }>>([]);
   const [isFinished, setIsFinished] = useState<boolean>(false);
   const [disqualified, setDisqualified] = useState<boolean>(false);
   const [score, setScore] = useState<number>(0);
 
+  // Extract quiz ID from all possible sources
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const idFromUrl = params.get('quizId') || propQuizId || '';
-    if (idFromUrl) {
-      setQuizId(idFromUrl);
-      loadQuiz(idFromUrl);
+    const targetId = params.get('quiz') || params.get('quizId') || quizIdFromUrl || propQuizId || '';
+    
+    if (targetId) {
+      setResolvedQuizId(targetId);
+      loadQuiz(targetId);
     } else {
       setLoadingQuiz(false);
     }
-  }, [propQuizId]);
+  }, [propQuizId, quizIdFromUrl]);
 
   const loadQuiz = async (id: string) => {
     setLoadingQuiz(true);
@@ -48,15 +51,17 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     setLoadingQuiz(false);
   };
 
+  // Live theme listener from host
   useEffect(() => {
     const unsubscribe = subscribeToMessages((msg) => {
-      if (msg.type === 'THEME_CHANGE' && msg.payload?.theme) {
-        applyGlobalTheme(msg.payload.theme);
+      if (msg.type === 'THEME_CHANGE' && msg.theme) {
+        applyGlobalTheme(msg.theme);
       }
     });
     return () => unsubscribe();
   }, []);
 
+  // Anti-cheat detection listeners
   useEffect(() => {
     if (!isJoined || isFinished || disqualified) return;
 
@@ -87,9 +92,11 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
   const recordViolation = async (reason: string) => {
     const newStrikes = strikes + 1;
-    const newViolations = [...violations, `${new Date().toLocaleTimeString()} - ${reason}`];
+    const newViolationItem = { timestamp: new Date().toLocaleTimeString(), message: reason };
+    const updatedViolations = [...violations, newViolationItem];
+    
     setStrikes(newStrikes);
-    setViolations(newViolations);
+    setViolations(updatedViolations);
 
     const isDisq = newStrikes >= 3;
     if (isDisq) {
@@ -97,19 +104,20 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
       setIsFinished(true);
     }
 
-    if (supabase && quizId) {
+    if (supabase && resolvedQuizId) {
       await supabase.from('participants').upsert({
         id: participantId,
-        quiz_id: quizId,
+        quiz_id: resolvedQuizId,
         name: name,
         strikes: newStrikes,
         status: isDisq ? 'Disqualified' : 'Active',
-        violations: newViolations,
+        violations: updatedViolations,
         updated_at: new Date().toISOString()
       });
     }
   };
 
+  // Automated countdown logic
   useEffect(() => {
     if (!isJoined || isFinished || disqualified || !quiz) return;
     if (quiz.pacingMode !== 'auto') return;
@@ -145,10 +153,10 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
     setIsJoined(true);
 
-    if (supabase && quizId) {
+    if (supabase && resolvedQuizId) {
       await supabase.from('participants').upsert({
         id: participantId,
-        quiz_id: quizId,
+        quiz_id: resolvedQuizId,
         name: name,
         score: 0,
         strikes: 0,
@@ -170,21 +178,21 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     let totalScore = 0;
     quiz.questions.forEach((q) => {
       if (answers[q.id] === q.correctAnswer) {
-        totalScore += q.points || 1;
+        totalScore += 10;
       }
     });
 
     setScore(totalScore);
     setIsFinished(true);
 
-    if (supabase && quizId) {
+    if (supabase && resolvedQuizId) {
       await supabase.from('participants').upsert({
         id: participantId,
-        quiz_id: quizId,
+        quiz_id: resolvedQuizId,
         name: name,
         score: totalScore,
         strikes: strikes,
-        status: disqualified ? 'Disqualified' : 'Submitted',
+        status: disqualified ? 'Disqualified' : 'Completed',
         violations: violations,
         answers: answers,
         updated_at: new Date().toISOString()
@@ -195,7 +203,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
   if (loadingQuiz) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
-        <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4" />
+        <div className="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-4" />
         <p className="text-slate-300 font-medium">Connecting to live assessment...</p>
       </div>
     );
@@ -211,7 +219,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
         </p>
         <button
           onClick={() => window.location.href = window.location.origin}
-          className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition"
+          className="px-6 py-2.5 bg-cyan-600 hover:bg-cyan-700 text-white rounded-xl font-medium transition"
         >
           Go to Home
         </button>
@@ -237,7 +245,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
             <p className="text-slate-400 text-sm mb-6">Great job! Your responses have been submitted to the host portal.</p>
             <div className="bg-slate-800/60 p-6 rounded-xl mb-6">
               <span className="text-slate-400 text-xs uppercase tracking-wider block mb-1">Your Score</span>
-              <span className="text-4xl font-extrabold text-indigo-400">{score} pts</span>
+              <span className="text-4xl font-extrabold text-cyan-400">{score} pts</span>
             </div>
           </div>
         )}
@@ -271,13 +279,13 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
               placeholder="e.g. John Doe"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
+              className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-cyan-500"
             />
           </div>
 
           <button
             type="submit"
-            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium text-sm transition flex items-center justify-center gap-2"
+            className="w-full py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 text-white rounded-xl font-medium text-sm transition flex items-center justify-center gap-2"
           >
             <Maximize className="w-4 h-4" /> Enter Fullscreen & Start
           </button>
@@ -292,7 +300,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     <div className="max-w-2xl mx-auto my-6 p-6 sm:p-8 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl">
       <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-6">
         <div>
-          <span className="text-xs font-semibold text-indigo-400 uppercase tracking-wider">
+          <span className="text-xs font-semibold text-cyan-400 uppercase tracking-wider">
             Question {currentIdx + 1} of {quiz.questions.length}
           </span>
           <h3 className="text-sm font-medium text-slate-300">{quiz.title}</h3>
@@ -326,12 +334,12 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
                 onClick={() => handleSelectOption(oIdx)}
                 className={`w-full text-left p-4 rounded-xl border text-sm font-medium transition flex items-center justify-between ${
                   isSelected
-                    ? 'bg-indigo-600/20 border-indigo-500 text-white'
+                    ? 'bg-cyan-600/20 border-cyan-500 text-white'
                     : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:border-slate-600'
                 }`}
               >
                 <span>{opt}</span>
-                {isSelected && <CheckCircle className="w-4 h-4 text-indigo-400 shrink-0 ml-2" />}
+                {isSelected && <CheckCircle className="w-4 h-4 text-cyan-400 shrink-0 ml-2" />}
               </button>
             );
           })}
@@ -358,7 +366,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
                 setTimeLeft(quiz.questions[nextIdx].timeLimit || 30);
               }
             }}
-            className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-medium transition"
+            className="px-5 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 text-white rounded-xl text-xs font-medium transition"
           >
             Next Question
           </button>

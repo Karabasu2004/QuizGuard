@@ -66,15 +66,17 @@ export const saveQuiz = async (quiz: Quiz): Promise<boolean> => {
 };
 
 export const getSavedQuiz = async (quizId: string): Promise<Quiz | null> => {
-  // 1. Check local storage
-  const local = localStorage.getItem(`quizguard_quiz_${quizId}`);
-  if (local) {
-    try { 
-      return JSON.parse(local); 
-    } catch (e) {}
-  }
+  if (!quizId) return null;
 
-  // 2. Fetch from Supabase cloud database
+  // 1. Try local storage first
+  try {
+    const local = localStorage.getItem(`quizguard_quiz_${quizId}`);
+    if (local) {
+      return JSON.parse(local);
+    }
+  } catch (e) {}
+
+  // 2. Query Supabase Cloud Database
   if (supabase) {
     try {
       const { data, error } = await supabase
@@ -83,15 +85,29 @@ export const getSavedQuiz = async (quizId: string): Promise<Quiz | null> => {
         .eq('id', quizId)
         .maybeSingle();
 
-      if (data && !error) {
+      if (error) {
+        console.error('Supabase fetch error:', error);
+      }
+
+      if (data) {
+        let parsedQuestions = data.questions;
+        if (typeof parsedQuestions === 'string') {
+          try {
+            parsedQuestions = JSON.parse(parsedQuestions);
+          } catch (e) {
+            parsedQuestions = [];
+          }
+        }
+
         return {
           id: data.id,
           hostEmail: data.host_email,
           title: data.title,
-          pacingMode: data.pacing_mode,
-          theme: data.theme,
-          questions: data.questions,
-          createdAt: data.created_at
+          pacingMode: data.pacing_mode || 'manual',
+          theme: data.theme || 'slate',
+          questions: Array.isArray(parsedQuestions) ? parsedQuestions : [],
+          createdAt: data.created_at,
+          participants: {}
         } as Quiz;
       }
     } catch (e) {

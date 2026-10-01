@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Quiz, Question, StudentResult, ThemeColor, THEME_CONFIG } from '../types';
-import { broadcastMessage, subscribeToMessages, saveQuiz, applyGlobalTheme } from '../supabase';
+import { broadcastMessage, subscribeToMessages, saveQuiz, applyGlobalTheme, supabase } from '../supabase';
 import { PieChart } from './PieChart';
 import { 
   Shield, Plus, Copy, Check, ExternalLink, LogOut, Trash2, Users, 
@@ -66,25 +66,46 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     }
   }, [hostEmail]);
 
+  // Real-time Cloud Sync: Poll Supabase for cross-device participants
   useEffect(() => {
-    const unsubscribe = subscribeToMessages((msg) => {
-      if (activeQuiz && msg.quizId === activeQuiz.id && msg.student) {
-        setActiveQuiz((prev) => {
-          if (!prev) return null;
-          const updated: Quiz = {
-            ...prev,
-            participants: {
-              ...prev.participants,
-              [msg.student!.id]: msg.student!,
+    if (!activeQuiz || !supabase) return;
+
+    const fetchLiveParticipants = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('participants')
+          .select('*')
+          .eq('quiz_id', activeQuiz.id);
+
+        if (data && !error) {
+          const pMap: Record<string, StudentResult> = {};
+          data.forEach((p: any) => {
+            let vList = p.violations;
+            if (typeof vList === 'string') {
+              try { vList = JSON.parse(vList); } catch (e) { vList = []; }
             }
-          };
-          saveQuiz(updated);
-          return updated;
-        });
-      }
-    });
-    return () => unsubscribe();
-  }, [activeQuiz]);
+
+            pMap[p.id] = {
+              id: p.id,
+              name: p.name,
+              score: p.score || 0,
+              strikes: p.strikes || 0,
+              status: p.status || 'Active',
+              violations: Array.isArray(vList) ? vList : [],
+              answers: p.answers || {},
+              submittedAt: p.updated_at
+            };
+          });
+
+          setActiveQuiz((prev) => (prev ? { ...prev, participants: pMap } : null));
+        }
+      } catch (e) {}
+    };
+
+    fetchLiveParticipants();
+    const interval = setInterval(fetchLiveParticipants, 2000);
+    return () => clearInterval(interval);
+  }, [activeQuiz?.id]);
 
   const handleRegister = (e: React.FormEvent) => {
     e.preventDefault();
@@ -168,7 +189,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     setCorrectOpt(0);
   };
 
-  const handleLaunchQuiz = () => {
+  const handleLaunchQuiz = async () => {
     if (!newTitle.trim()) {
       alert('Please enter an assessment title.');
       return;
@@ -190,7 +211,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
       participants: {},
     };
 
-    saveQuiz(newQuiz);
+    await saveQuiz(newQuiz);
     const updated = [newQuiz, ...quizzes];
     setQuizzes(updated);
     localStorage.setItem(`quizguard_host_quizzes_${hostEmail}`, JSON.stringify(updated));
@@ -202,18 +223,15 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     setNewTitle('');
   };
 
-  // Instant Host + Broadcast Theme Switch
   const handleThemeSwitch = (theme: ThemeColor) => {
     if (!activeQuiz) return;
     const updated: Quiz = { ...activeQuiz, theme };
     setActiveQuiz(updated);
     saveQuiz(updated);
 
-    // Apply to Host screen immediately
     onThemeChange(theme);
     applyGlobalTheme(theme);
 
-    // Broadcast to student screens
     broadcastMessage({
       type: 'THEME_CHANGE',
       quizId: activeQuiz.id,
@@ -432,7 +450,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
             </p>
           </div>
 
-          {/* Theme Switcher */}
           <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-2xl border border-slate-800">
             <span className="text-xs text-slate-400 flex items-center gap-1.5 px-2">
               <Palette className="w-3.5 h-3.5 text-cyan-400" /> Theme:
@@ -451,7 +468,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                   activeQuiz.theme === t.id ? 'border-white scale-110 shadow-lg' : 'border-transparent opacity-60 hover:opacity-100'
                 }`}
                 style={{ backgroundColor: t.color }}
-                title={`Switch entire assessment theme to ${t.id}`}
+                title={`Switch theme to ${t.id}`}
               />
             ))}
           </div>
@@ -464,7 +481,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           </button>
         </div>
 
-        {/* Link Share */}
         <div className="bg-slate-900/80 border border-cyan-500/30 p-6 rounded-3xl shadow-xl space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs font-mono uppercase tracking-widest text-cyan-400 font-bold">
@@ -475,11 +491,11 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           <div className="flex items-center gap-3">
             <input 
               readOnly 
-              value={shareableUrl}
+              value={shareableUrl} 
               className="flex-1 px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-sm font-mono text-cyan-300 select-all"
             />
             <button 
-              onClick={copyShareLink}
+              onClick={copyShareLink} 
               className="px-6 py-3 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 text-white font-bold rounded-xl text-sm flex items-center gap-2 transition"
             >
               {copied ? <Check className="w-4 h-4 text-emerald-300" /> : <Copy className="w-4 h-4" />}
@@ -488,7 +504,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
             <a 
               href={shareableUrl} 
               target="_blank" 
-              rel="noreferrer"
+              rel="noreferrer" 
               className="p-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700"
               title="Open test link in new tab"
             >
@@ -497,19 +513,17 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           </div>
         </div>
 
-        {/* PIE CHARTS */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <PieChart title="Candidate Integrity Breakdown" data={statusChartData} />
           <PieChart title="Score Distribution Brackets" data={scoreChartData} />
         </div>
 
-        {/* Telemetry Table */}
         <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-4">
           <div className="flex justify-between items-center">
             <h3 className="text-lg font-bold text-white flex items-center gap-2">
               <Users className="w-5 h-5 text-cyan-400" /> Participant Telemetry & Audit ({participantsList.length})
             </h3>
-            <span className="text-xs font-mono text-slate-400">Auto-reports on submission</span>
+            <span className="text-xs font-mono text-slate-400">Live 2s Cloud Polling</span>
           </div>
 
           <div className="overflow-x-auto rounded-2xl border border-slate-800">

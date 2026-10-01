@@ -10,24 +10,25 @@ export default function App() {
   const [quizIdFromUrl, setQuizIdFromUrl] = useState<string | null>(null);
   const [activeTheme, setActiveTheme] = useState<ThemeColor>('slate');
 
-  // Detect ?quiz=quiz_xxx in URL
+  // Detect ?quiz=... or ?quizId=... in URL
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const quizId = params.get('quiz');
+    const quizId = params.get('quiz') || params.get('quizId');
     if (quizId) {
       setQuizIdFromUrl(quizId);
       setRole('student');
-      const loaded = getSavedQuiz(quizId);
-      if (loaded?.theme) {
-        setActiveTheme(loaded.theme);
-        applyGlobalTheme(loaded.theme);
-      }
+      getSavedQuiz(quizId).then((loaded) => {
+        if (loaded?.theme) {
+          setActiveTheme(loaded.theme);
+          applyGlobalTheme(loaded.theme);
+        }
+      });
     } else {
       applyGlobalTheme('slate');
     }
   }, []);
 
-  // Listen to Host Theme Broadcasts across tabs
+  // Listen to Host Theme Broadcasts
   useEffect(() => {
     const unsubscribe = subscribeToMessages((msg) => {
       if (msg.type === 'THEME_CHANGE' && msg.theme) {
@@ -50,7 +51,6 @@ export default function App() {
         background: `radial-gradient(circle at 50% 0%, ${THEME_CONFIG[activeTheme].glow} 0%, transparent 65%)`
       }}
     >
-      {/* Header */}
       <header className="border-b border-slate-800/80 backdrop-blur-md sticky top-0 z-40 bg-black/40">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div 
@@ -81,7 +81,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-8">
         {role === 'landing' && (
           <div className="py-16 space-y-12 text-center max-w-2xl mx-auto">
@@ -115,10 +114,14 @@ export default function App() {
           />
         )}
         
-        {role === 'student' && <StudentPortal quizIdFromUrl={quizIdFromUrl || undefined} />}
+        {role === 'student' && (
+          <StudentPortal 
+            quizId={quizIdFromUrl || undefined}
+            quizIdFromUrl={quizIdFromUrl || undefined} 
+          />
+        )}
       </main>
 
-      {/* Footer */}
       <footer className="border-t border-slate-900 bg-black/40 py-6 text-center text-xs text-slate-600 font-mono">
         QuizGuard Live • Vite, React, TypeScript & Tailwind CSS
       </footer>
