@@ -1,0 +1,127 @@
+import React, { useState, useEffect } from 'react';
+import { HostDashboard } from './components/HostDashboard';
+import { StudentPortal } from './components/StudentPortal';
+import { ThemeColor, THEME_CONFIG } from './types';
+import { subscribeToMessages, applyGlobalTheme, getSavedQuiz } from './supabase';
+import { Shield, MonitorCheck, ArrowRight } from 'lucide-react';
+
+export default function App() {
+  const [role, setRole] = useState<'landing' | 'host' | 'student'>('landing');
+  const [quizIdFromUrl, setQuizIdFromUrl] = useState<string | null>(null);
+  const [activeTheme, setActiveTheme] = useState<ThemeColor>('slate');
+
+  // Detect ?quiz=quiz_xxx in URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const quizId = params.get('quiz');
+    if (quizId) {
+      setQuizIdFromUrl(quizId);
+      setRole('student');
+      const loaded = getSavedQuiz(quizId);
+      if (loaded?.theme) {
+        setActiveTheme(loaded.theme);
+        applyGlobalTheme(loaded.theme);
+      }
+    } else {
+      applyGlobalTheme('slate');
+    }
+  }, []);
+
+  // Listen to Host Theme Broadcasts across tabs
+  useEffect(() => {
+    const unsubscribe = subscribeToMessages((msg) => {
+      if (msg.type === 'THEME_CHANGE' && msg.theme) {
+        setActiveTheme(msg.theme);
+        applyGlobalTheme(msg.theme);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleHostThemeChange = (newTheme: ThemeColor) => {
+    setActiveTheme(newTheme);
+    applyGlobalTheme(newTheme);
+  };
+
+  return (
+    <div 
+      className="min-h-screen flex flex-col justify-between"
+      style={{
+        background: `radial-gradient(circle at 50% 0%, ${THEME_CONFIG[activeTheme].glow} 0%, transparent 65%)`
+      }}
+    >
+      {/* Header */}
+      <header className="border-b border-slate-800/80 backdrop-blur-md sticky top-0 z-40 bg-black/40">
+        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+          <div 
+            onClick={() => setRole('landing')} 
+            className="flex items-center gap-3 cursor-pointer group"
+          >
+            <div className="p-2 bg-gradient-to-tr from-cyan-600 to-blue-600 rounded-xl shadow-lg shadow-cyan-500/20 group-hover:scale-105 transition">
+              <Shield className="w-5 h-5 text-white" />
+            </div>
+            <div className="leading-tight">
+              <span className="text-lg font-black tracking-wider text-white">
+                QUIZGUARD<span className="text-cyan-400">.LIVE</span>
+              </span>
+              <span className="block text-[10px] text-cyan-400 font-mono tracking-widest uppercase">
+                Integrity Engine v3.0
+              </span>
+            </div>
+          </div>
+
+          {role === 'host' && (
+            <button 
+              onClick={() => setRole('landing')}
+              className="text-xs font-semibold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 transition"
+            >
+              ? Back to Main Menu
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* Main Container */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-8">
+        {role === 'landing' && (
+          <div className="py-16 space-y-12 text-center max-w-2xl mx-auto">
+            <h1 className="text-4xl sm:text-5xl font-black text-white tracking-tight leading-tight">
+              Proctored Live Assessments
+            </h1>
+            <p className="text-slate-400 text-sm sm:text-base leading-relaxed">
+              Anti-cheat browser lockdown, real-time question pacing, live theme broadcasting, and instant telemetry reports.
+            </p>
+
+            <div 
+              onClick={() => setRole('host')}
+              className="group bg-slate-900/80 border border-slate-800 hover:border-cyan-500/50 p-8 rounded-3xl cursor-pointer transition shadow-xl max-w-md mx-auto text-left"
+            >
+              <MonitorCheck className="w-10 h-10 text-cyan-400 mb-4 group-hover:scale-110 transition" />
+              <h3 className="text-xl font-bold text-white mb-2">Host Portal</h3>
+              <p className="text-xs text-slate-400 mb-6 leading-relaxed">
+                Register or sign in, construct questions with timers, switch assessment themes live, and inspect participant integrity charts.
+              </p>
+              <div className="flex items-center text-xs font-bold text-cyan-400 group-hover:translate-x-1 transition-transform">
+                Open Host Studio <ArrowRight className="w-4 h-4 ml-1.5" />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {role === 'host' && (
+          <HostDashboard 
+            onLogout={() => setRole('landing')} 
+            onThemeChange={handleHostThemeChange} 
+          />
+        )}
+        
+        {role === 'student' && <StudentPortal quizIdFromUrl={quizIdFromUrl || undefined} />}
+      </main>
+
+      {/* Footer */}
+      <footer className="border-t border-slate-900 bg-black/40 py-6 text-center text-xs text-slate-600 font-mono">
+        QuizGuard Live • Vite, React, TypeScript & Tailwind CSS
+      </footer>
+    </div>
+  );
+}
