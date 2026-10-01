@@ -39,11 +39,52 @@ export const subscribeToMessages = (callback: (msg: QuizBroadcastMessage) => voi
   };
 };
 
-export const getSavedQuiz = (quizId: string): Quiz | null => {
-  const data = localStorage.getItem(`quizguard_quiz_${quizId}`);
-  return data ? JSON.parse(data) : null;
+export const saveQuiz = async (quiz: Quiz) => {
+  localStorage.setItem(`quizguard_quiz_${quiz.id}`, JSON.stringify(quiz));
+  if (supabase) {
+    try {
+      await supabase.from('quizzes').upsert({
+        id: quiz.id,
+        host_email: quiz.hostEmail || 'host@quizguard.live',
+        title: quiz.title,
+        pacing_mode: quiz.pacingMode,
+        theme: quiz.theme || 'slate',
+        questions: quiz.questions
+      });
+    } catch (e) {
+      console.error('Error syncing quiz to Supabase:', e);
+    }
+  }
 };
 
-export const saveQuiz = (quiz: Quiz) => {
-  localStorage.setItem(`quizguard_quiz_${quiz.id}`, JSON.stringify(quiz));
+export const getSavedQuiz = async (quizId: string): Promise<Quiz | null> => {
+  const local = localStorage.getItem(`quizguard_quiz_${quizId}`);
+  if (local) {
+    try { return JSON.parse(local); } catch (e) {}
+  }
+
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('quizzes')
+        .select('*')
+        .eq('id', quizId)
+        .single();
+
+      if (data && !error) {
+        return {
+          id: data.id,
+          hostEmail: data.host_email,
+          title: data.title,
+          pacingMode: data.pacing_mode,
+          theme: data.theme,
+          questions: data.questions,
+          createdAt: data.created_at
+        } as Quiz;
+      }
+    } catch (e) {
+      console.error('Error fetching quiz from Supabase:', e);
+    }
+  }
+  return null;
 };
