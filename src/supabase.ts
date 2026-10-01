@@ -1,13 +1,10 @@
 import { createClient } from '@supabase/supabase-js';
 import { Quiz, ThemeColor, THEME_CONFIG, QuizBroadcastMessage } from './types';
 
-const env = (import.meta as any).env || {};
-const supabaseUrl: string = env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey: string = env.VITE_SUPABASE_ANON_KEY || '';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://xpmmjwltjwaoadncomjs.supabase.co';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhwbW1qd2x0andhb2FkbmNvbWpzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA3NzcxNTQsImV4cCI6MjEwNjM1MzE1NH0.MdaTeVN0nwqUZIel6SjBRL-cSaxH7xT2fIpBeuaNkts';
 
-export const supabase = (supabaseUrl && supabaseAnonKey) 
-  ? createClient(supabaseUrl, supabaseAnonKey) 
-  : null;
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const fallbackChannel = typeof window !== 'undefined' ? new BroadcastChannel('quizguard_live_channel') : null;
 
@@ -39,11 +36,14 @@ export const subscribeToMessages = (callback: (msg: QuizBroadcastMessage) => voi
   };
 };
 
-export const saveQuiz = async (quiz: Quiz) => {
-  localStorage.setItem(`quizguard_quiz_${quiz.id}`, JSON.stringify(quiz));
+export const saveQuiz = async (quiz: Quiz): Promise<boolean> => {
+  try {
+    localStorage.setItem(`quizguard_quiz_${quiz.id}`, JSON.stringify(quiz));
+  } catch (e) {}
+
   if (supabase) {
     try {
-      await supabase.from('quizzes').upsert({
+      const { error } = await supabase.from('quizzes').upsert({
         id: quiz.id,
         host_email: quiz.hostEmail || 'host@quizguard.live',
         title: quiz.title,
@@ -51,25 +51,37 @@ export const saveQuiz = async (quiz: Quiz) => {
         theme: quiz.theme || 'slate',
         questions: quiz.questions
       });
+
+      if (error) {
+        console.error('Supabase save error:', error);
+        return false;
+      }
+      return true;
     } catch (e) {
       console.error('Error syncing quiz to Supabase:', e);
+      return false;
     }
   }
+  return true;
 };
 
 export const getSavedQuiz = async (quizId: string): Promise<Quiz | null> => {
+  // 1. Check local storage
   const local = localStorage.getItem(`quizguard_quiz_${quizId}`);
   if (local) {
-    try { return JSON.parse(local); } catch (e) {}
+    try { 
+      return JSON.parse(local); 
+    } catch (e) {}
   }
 
+  // 2. Fetch from Supabase cloud database
   if (supabase) {
     try {
       const { data, error } = await supabase
         .from('quizzes')
         .select('*')
         .eq('id', quizId)
-        .single();
+        .maybeSingle();
 
       if (data && !error) {
         return {
