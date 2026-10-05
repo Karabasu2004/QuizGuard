@@ -122,9 +122,7 @@ export default function App() {
         )}
       </main>
 
-      <footer className="border-t border-slate-900 bg-black/40 py-6 text-center text-xs text-slate-600 font-mono">
-        QuizGuard Live • Vite, React, TypeScript & Tailwind CSS
-      </footer>
+      <footer className="border-t border-slate-900/60 bg-black/40 py-4"></footer>
     </div>
   );
 }

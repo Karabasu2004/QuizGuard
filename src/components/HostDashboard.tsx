@@ -413,7 +413,14 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   }
 
   if (activeQuiz) {
-    const participantsList = Object.values(activeQuiz.participants || {});
+    // Sorted by score descending; Disqualified candidates always placed last
+    const participantsList = Object.values(activeQuiz.participants || {}).sort((a, b) => {
+      const aDisq = a.status === 'Disqualified';
+      const bDisq = b.status === 'Disqualified';
+      if (aDisq && !bDisq) return 1;
+      if (!aDisq && bDisq) return -1;
+      return (b.score || 0) - (a.score || 0);
+    });
     
     const completedCount = participantsList.filter(s => s.status === 'Completed').length;
     const disqualifiedCount = participantsList.filter(s => s.status === 'Disqualified').length;
@@ -523,7 +530,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
             <h3 className="text-lg font-bold text-white flex items-center gap-2">
               <Users className="w-5 h-5 text-cyan-400" /> Participant Telemetry & Audit ({participantsList.length})
             </h3>
-            <span className="text-xs font-mono text-slate-400">Live 2s Cloud Polling</span>
+            <span className="text-xs font-mono text-slate-400">Ranked by Score (Disqualified at end)</span>
           </div>
 
           <div className="overflow-x-auto rounded-2xl border border-slate-800">
