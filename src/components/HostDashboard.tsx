@@ -4,7 +4,7 @@ import { broadcastMessage, subscribeToMessages, saveQuiz, applyGlobalTheme, supa
 import { PieChart } from './PieChart';
 import { 
   Shield, Plus, Copy, Check, ExternalLink, LogOut, Trash2, Users, 
-  Clock, Palette, CheckCircle2, Lock, Mail, User, RefreshCw
+  Clock, Palette, CheckCircle2, Lock, Mail, User, RefreshCw, StopCircle
 } from 'lucide-react';
 
 interface HostProps {
@@ -79,7 +79,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
 
         if (data && !error) {
           const pMap: Record<string, StudentResult> = {};
-          data.forEach((p: any) => {
+          data.filter((p: any) => !p.id.startsWith('QUIZ_STATE_')).forEach((p: any) => {
             let vList = p.violations;
             if (typeof vList === 'string') {
               try { vList = JSON.parse(vList); } catch (e) { vList = []; }
@@ -237,6 +237,42 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
       quizId: activeQuiz.id,
       theme,
     });
+  };
+
+  // Host Stop Assessment: affects all participants
+  const handleStopAssessment = async () => {
+    if (!activeQuiz) return;
+    if (!window.confirm('Are you sure you want to stop this assessment? All connected participants will be halted immediately.')) {
+      return;
+    }
+
+    const updated: Quiz = { ...activeQuiz, status: 'ended' };
+    setActiveQuiz(updated);
+    saveQuiz(updated);
+
+    // 1. Broadcast stop event locally
+    broadcastMessage({
+      type: 'STOP_QUIZ' as any,
+      quizId: activeQuiz.id,
+    });
+
+    // 2. Persist stop state to Supabase for all participant devices
+    if (supabase) {
+      try {
+        await supabase.from('participants').upsert({
+          id: `QUIZ_STATE_${activeQuiz.id}`,
+          quiz_id: activeQuiz.id,
+          name: '__QUIZ_STATE__',
+          status: 'ENDED',
+          score: 0,
+          strikes: 0,
+          violations: [],
+          updated_at: new Date().toISOString()
+        });
+
+        await supabase.from('quizzes').update({ pacing_mode: 'ended' }).eq('id', activeQuiz.id);
+      } catch (e) {}
+    }
   };
 
   const shareableUrl = activeQuiz 
@@ -413,7 +449,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   }
 
   if (activeQuiz) {
-    // Sorted by score descending; Disqualified candidates always placed last
+    // Sorted by score descending; Disqualified candidates placed last
     const participantsList = Object.values(activeQuiz.participants || {}).sort((a, b) => {
       const aDisq = a.status === 'Disqualified';
       const bDisq = b.status === 'Disqualified';
@@ -443,13 +479,17 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
       { label: 'Review (<50%)', value: lowScore, color: '#ec4899' },
     ];
 
+    const isQuizEnded = activeQuiz.status === 'ended';
+
     return (
       <div className="space-y-8">
         <div className="flex flex-wrap items-center justify-between bg-slate-900/60 border border-slate-800 p-5 rounded-3xl gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-              <span className="text-xs font-mono uppercase tracking-wider text-emerald-400 font-bold">Live Assessment</span>
+              <span className={`w-2.5 h-2.5 rounded-full ${isQuizEnded ? 'bg-red-400' : 'bg-emerald-400 animate-ping'}`}></span>
+              <span className={`text-xs font-mono uppercase tracking-wider font-bold ${isQuizEnded ? 'text-red-400' : 'text-emerald-400'}`}>
+                {isQuizEnded ? 'Assessment Concluded' : 'Live Assessment'}
+              </span>
             </div>
             <h1 className="text-2xl font-black text-white mt-1">{activeQuiz.title}</h1>
             <p className="text-xs text-slate-400">
@@ -457,35 +497,52 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
             </p>
           </div>
 
-          <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-2xl border border-slate-800">
-            <span className="text-xs text-slate-400 flex items-center gap-1.5 px-2">
-              <Palette className="w-3.5 h-3.5 text-cyan-400" /> Theme:
-            </span>
-            {[
-              { id: 'slate', color: '#0f172a' },
-              { id: 'midnight', color: '#1d4ed8' },
-              { id: 'cyberpunk', color: '#a21caf' },
-              { id: 'emerald', color: '#047857' },
-              { id: 'crimson', color: '#b91c1c' },
-            ].map((t) => (
-              <button
-                key={t.id}
-                onClick={() => handleThemeSwitch(t.id as ThemeColor)}
-                className={`w-6 h-6 rounded-full border-2 transition ${
-                  activeQuiz.theme === t.id ? 'border-white scale-110 shadow-lg' : 'border-transparent opacity-60 hover:opacity-100'
-                }`}
-                style={{ backgroundColor: t.color }}
-                title={`Switch theme to ${t.id}`}
-              />
-            ))}
-          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Theme Switcher */}
+            <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-2xl border border-slate-800">
+              <span className="text-xs text-slate-400 flex items-center gap-1.5 px-2">
+                <Palette className="w-3.5 h-3.5 text-cyan-400" /> Theme:
+              </span>
+              {[
+                { id: 'slate', color: '#0f172a' },
+                { id: 'midnight', color: '#1d4ed8' },
+                { id: 'cyberpunk', color: '#a21caf' },
+                { id: 'emerald', color: '#047857' },
+                { id: 'crimson', color: '#b91c1c' },
+              ].map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => handleThemeSwitch(t.id as ThemeColor)}
+                  className={`w-6 h-6 rounded-full border-2 transition ${
+                    activeQuiz.theme === t.id ? 'border-white scale-110 shadow-lg' : 'border-transparent opacity-60 hover:opacity-100'
+                  }`}
+                  style={{ backgroundColor: t.color }}
+                  title={`Switch theme to ${t.id}`}
+                />
+              ))}
+            </div>
 
-          <button 
-            onClick={() => setActiveQuiz(null)}
-            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-xl border border-slate-700"
-          >
-            ? Back to Quiz Builder
-          </button>
+            {/* Stop Assessment Button */}
+            <button
+              onClick={handleStopAssessment}
+              disabled={isQuizEnded}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition border ${
+                isQuizEnded
+                  ? 'bg-red-950/40 text-red-400/60 border-red-900/40 cursor-not-allowed'
+                  : 'bg-red-600 hover:bg-red-500 text-white border-red-500 shadow-lg shadow-red-600/20'
+              }`}
+            >
+              <StopCircle className="w-4 h-4" />
+              {isQuizEnded ? 'Assessment Stopped' : 'Stop Assessment'}
+            </button>
+
+            <button 
+              onClick={() => setActiveQuiz(null)}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-xl border border-slate-700"
+            >
+              ? Back to Quiz Builder
+            </button>
+          </div>
         </div>
 
         <div className="bg-slate-900/80 border border-cyan-500/30 p-6 rounded-3xl shadow-xl space-y-3">

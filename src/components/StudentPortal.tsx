@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Quiz, Question, ThemeColor } from '../types';
 import { getSavedQuiz, applyGlobalTheme, subscribeToMessages, supabase } from '../supabase';
-import { ShieldAlert, CheckCircle, AlertTriangle, Maximize, Clock, Trophy } from 'lucide-react';
+import { ShieldAlert, CheckCircle, AlertTriangle, Maximize, Clock, Trophy, AlertOctagon } from 'lucide-react';
 
 interface StudentPortalProps {
   quizId?: string;
@@ -10,60 +10,163 @@ interface StudentPortalProps {
 }
 
 export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId, quizIdFromUrl, onExit }) => {
-  const [resolvedQuizId, setResolvedQuizId] = useState<string>('');
+  const [resolvedQuizId, setResolvedQuizId] = useState<string>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('quiz') || params.get('quizId') || quizIdFromUrl || propQuizId || '';
+  });
+
+  // Check if this device is already disqualified from a previous attempt
+  const isAlreadyDisqualified = resolvedQuizId 
+    ? localStorage.getItem(`quizguard_disqualified_${resolvedQuizId}`) === 'true' 
+    : false;
+
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [loadingQuiz, setLoadingQuiz] = useState<boolean>(true);
-  const [name, setName] = useState<string>('');
-  const [isJoined, setIsJoined] = useState<boolean>(false);
-  const [participantId] = useState<string>(() => 'p_' + Math.random().toString(36).substring(2, 9));
+  const [name, setName] = useState<string>(() => {
+    return resolvedQuizId ? (localStorage.getItem(`quizguard_name_${resolvedQuizId}`) || '') : '';
+  });
+  
+  const [isJoined, setIsJoined] = useState<boolean>(isAlreadyDisqualified);
+  const [participantId] = useState<string>(() => {
+    const saved = resolvedQuizId ? localStorage.getItem(`quizguard_pid_${resolvedQuizId}`) : null;
+    return saved || ('p_' + Math.random().toString(36).substring(2, 9));
+  });
+
   const [currentIdx, setCurrentIdx] = useState<number>(0);
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [timeLeft, setTimeLeft] = useState<number>(30);
-  const [strikes, setStrikes] = useState<number>(0);
-  const [violations, setViolations] = useState<Array<{ timestamp: string; message: string }>>([]);
-  const [isFinished, setIsFinished] = useState<boolean>(false);
-  const [disqualified, setDisqualified] = useState<boolean>(false);
+  const [strikes, setStrikes] = useState<number>(isAlreadyDisqualified ? 3 : 0);
+  const [violations, setViolations] = useState<Array<{ timestamp: string; message: string }>>(() => {
+    if (!resolvedQuizId) return [];
+    try {
+      const saved = localStorage.getItem(`quizguard_violations_${resolvedQuizId}`);
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  const [isFinished, setIsFinished] = useState<boolean>(isAlreadyDisqualified);
+  const [disqualified, setDisqualified] = useState<boolean>(isAlreadyDisqualified);
+  const [isAssessmentStopped, setIsAssessmentStopped] = useState<boolean>(false);
   const [score, setScore] = useState<number>(0);
 
-  // Extract quiz ID from all possible sources
+  // Extract quiz ID if not present initially
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const targetId = params.get('quiz') || params.get('quizId') || quizIdFromUrl || propQuizId || '';
-    
-    if (targetId) {
+    if (targetId && targetId !== resolvedQuizId) {
       setResolvedQuizId(targetId);
-      loadQuiz(targetId);
-    } else {
-      setLoadingQuiz(false);
     }
   }, [propQuizId, quizIdFromUrl]);
 
+  // Load Quiz & Check Persistent Lockout
+  useEffect(() => {
+    if (!resolvedQuizId) {
+      setLoadingQuiz(false);
+      return;
+    }
+    loadQuiz(resolvedQuizId);
+  }, [resolvedQuizId]);
+
   const loadQuiz = async (id: string) => {
     setLoadingQuiz(true);
+    
+    // Check if device was disqualified locally
+    if (localStorage.getItem(`quizguard_disqualified_${id}`) === 'true') {
+      setDisqualified(true);
+      setIsFinished(true);
+      setIsJoined(true);
+      setStrikes(3);
+    }
+
     const loaded = await getSavedQuiz(id);
     if (loaded) {
       setQuiz(loaded);
       if (loaded.theme) applyGlobalTheme(loaded.theme);
+      if (loaded.pacingMode === 'ended' || (loaded as any).status === 'ended') {
+        setIsAssessmentStopped(true);
+      }
       if (loaded.questions && loaded.questions[0]) {
         setTimeLeft(loaded.questions[0].timeLimit || 30);
       }
     }
+
+    // Cross-verify with Supabase for persistent lockout on this participant ID
+    if (supabase && participantId) {
+      try {
+        const { data: pData } = await supabase
+          .from('participants')
+          .select('*')
+          .eq('id', participantId)
+          .maybeSingle();
+
+        if (pData?.status === 'Disqualified') {
+          setDisqualified(true);
+          setIsFinished(true);
+          setIsJoined(true);
+          setStrikes(pData.strikes || 3);
+          localStorage.setItem(`quizguard_disqualified_${id}`, 'true');
+        } else if (pData?.status === 'Completed') {
+          setIsFinished(true);
+          setIsJoined(true);
+          setScore(pData.score || 0);
+        }
+      } catch (e) {}
+    }
+
     setLoadingQuiz(false);
   };
 
-  // Live theme listener from host
+  // Listen to Host Theme and Stop broadcasts
   useEffect(() => {
-    const unsubscribe = subscribeToMessages((msg) => {
+    const unsubscribe = subscribeToMessages((msg: any) => {
       if (msg.type === 'THEME_CHANGE' && msg.theme) {
         applyGlobalTheme(msg.theme);
       }
+      if (msg.type === 'STOP_QUIZ' && msg.quizId === resolvedQuizId) {
+        setIsAssessmentStopped(true);
+      }
     });
     return () => unsubscribe();
-  }, []);
+  }, [resolvedQuizId]);
+
+  // Periodic poll to check if Host stopped the assessment across devices
+  useEffect(() => {
+    if (!resolvedQuizId || !supabase || isAssessmentStopped) return;
+
+    const checkHostStop = async () => {
+      try {
+        const { data: ctrlData } = await supabase
+          .from('participants')
+          .select('status')
+          .eq('id', `QUIZ_STATE_${resolvedQuizId}`)
+          .maybeSingle();
+
+        if (ctrlData && ctrlData.status === 'ENDED') {
+          setIsAssessmentStopped(true);
+          return;
+        }
+
+        const { data: qData } = await supabase
+          .from('quizzes')
+          .select('pacing_mode')
+          .eq('id', resolvedQuizId)
+          .maybeSingle();
+
+        if (qData && qData.pacing_mode === 'ended') {
+          setIsAssessmentStopped(true);
+        }
+      } catch (e) {}
+    };
+
+    const interval = setInterval(checkHostStop, 2500);
+    return () => clearInterval(interval);
+  }, [resolvedQuizId, isAssessmentStopped]);
 
   // Anti-cheat detection listeners
   useEffect(() => {
-    if (!isJoined || isFinished || disqualified) return;
+    if (!isJoined || isFinished || disqualified || isAssessmentStopped) return;
 
     const handleVisibilityChange = () => {
       if (document.hidden) recordViolation('Tab Switch / Minimized Window');
@@ -88,7 +191,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
       window.removeEventListener('blur', handleWindowBlur);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
-  }, [isJoined, isFinished, disqualified, strikes]);
+  }, [isJoined, isFinished, disqualified, isAssessmentStopped, strikes]);
 
   const recordViolation = async (reason: string) => {
     const newStrikes = strikes + 1;
@@ -102,6 +205,11 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     if (isDisq) {
       setDisqualified(true);
       setIsFinished(true);
+
+      // Lock this device permanently for this assessment
+      localStorage.setItem(`quizguard_disqualified_${resolvedQuizId}`, 'true');
+      localStorage.setItem(`quizguard_status_${resolvedQuizId}`, 'Disqualified');
+      localStorage.setItem(`quizguard_violations_${resolvedQuizId}`, JSON.stringify(updatedViolations));
     }
 
     if (supabase && resolvedQuizId) {
@@ -117,9 +225,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     }
   };
 
-  // Automated countdown logic
+  // Countdown timer for automatic pacing
   useEffect(() => {
-    if (!isJoined || isFinished || disqualified || !quiz) return;
+    if (!isJoined || isFinished || disqualified || isAssessmentStopped || !quiz) return;
     if (quiz.pacingMode !== 'auto') return;
 
     const timer = setInterval(() => {
@@ -139,11 +247,18 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [isJoined, isFinished, disqualified, quiz, currentIdx, answers]);
+  }, [isJoined, isFinished, disqualified, isAssessmentStopped, quiz, currentIdx, answers]);
 
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
+
+    // Check device lockout before allowing entry
+    if (localStorage.getItem(`quizguard_disqualified_${resolvedQuizId}`) === 'true') {
+      setDisqualified(true);
+      setIsFinished(true);
+      return;
+    }
 
     try {
       if (document.documentElement.requestFullscreen) {
@@ -152,6 +267,8 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     } catch (e) {}
 
     setIsJoined(true);
+    localStorage.setItem(`quizguard_pid_${resolvedQuizId}`, participantId);
+    localStorage.setItem(`quizguard_name_${resolvedQuizId}`, name);
 
     if (supabase && resolvedQuizId) {
       await supabase.from('participants').upsert({
@@ -168,13 +285,13 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
   };
 
   const handleSelectOption = (optIdx: number) => {
-    if (!quiz) return;
+    if (!quiz || isAssessmentStopped) return;
     const currentQ = quiz.questions[currentIdx];
     setAnswers((prev) => ({ ...prev, [currentQ.id]: optIdx }));
   };
 
   const handleSubmit = async () => {
-    if (!quiz) return;
+    if (!quiz || isAssessmentStopped) return;
     let totalScore = 0;
     quiz.questions.forEach((q) => {
       if (answers[q.id] === q.correctAnswer) {
@@ -209,6 +326,27 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     );
   }
 
+  // Assessment Stopped / Ended by Host Screen
+  if (isAssessmentStopped) {
+    return (
+      <div className="max-w-md mx-auto my-12 p-8 bg-slate-900 border border-slate-800 rounded-3xl text-center shadow-2xl">
+        <div className="p-3 bg-red-500/10 rounded-2xl w-fit mx-auto mb-4 border border-red-500/20">
+          <AlertOctagon className="w-12 h-12 text-red-400" />
+        </div>
+        <h2 className="text-2xl font-bold text-white mb-2">Assessment Ended</h2>
+        <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+          This assessment has been closed by the host. No further questions or attempts can be submitted.
+        </p>
+        {score > 0 && (
+          <div className="bg-slate-800/60 p-4 rounded-xl mb-4 border border-slate-700/60">
+            <span className="text-slate-400 text-xs uppercase tracking-wider block mb-1">Your Recorded Score</span>
+            <span className="text-3xl font-black text-cyan-400">{score} pts</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (!quiz) {
     return (
       <div className="max-w-md mx-auto my-12 p-8 bg-slate-900 border border-slate-800 rounded-2xl text-center shadow-xl">
@@ -227,28 +365,39 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     );
   }
 
+  // Persistent Disqualification Screen (Survives Refresh)
+  if (disqualified) {
+    return (
+      <div className="max-w-lg mx-auto my-12 p-8 bg-slate-900 border border-rose-500/30 rounded-3xl text-center shadow-2xl">
+        <div className="p-3 bg-rose-500/10 rounded-2xl w-fit mx-auto mb-4 border border-rose-500/20">
+          <ShieldAlert className="w-12 h-12 text-rose-500" />
+        </div>
+        <h2 className="text-2xl font-black text-rose-400 mb-2">Session Disqualified</h2>
+        <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+          This device exceeded the maximum integrity threshold (3 strikes). Your session is locked and cannot be retaken for this assessment.
+        </p>
+        <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 text-left space-y-2 text-xs font-mono max-h-48 overflow-y-auto">
+          <span className="text-slate-400 block font-bold mb-1">Recorded Proctor Violations:</span>
+          {violations.map((v, i) => (
+            <div key={i} className="text-rose-400">
+              • [{v.timestamp}] {v.message}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   if (isFinished) {
     return (
       <div className="max-w-lg mx-auto my-12 p-8 bg-slate-900 border border-slate-800 rounded-2xl text-center shadow-2xl">
-        {disqualified ? (
-          <div>
-            <ShieldAlert className="w-16 h-16 text-rose-500 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold text-rose-400 mb-2">Session Disqualified</h2>
-            <p className="text-slate-400 text-sm mb-6">
-              You exceeded the integrity threshold (3 strikes). Your responses and violation telemetry have been recorded for host audit.
-            </p>
-          </div>
-        ) : (
-          <div>
-            <Trophy className="w-16 h-16 text-amber-400 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold text-white mb-2">Assessment Submitted!</h2>
-            <p className="text-slate-400 text-sm mb-6">Great job! Your responses have been submitted to the host portal.</p>
-            <div className="bg-slate-800/60 p-6 rounded-xl mb-6">
-              <span className="text-slate-400 text-xs uppercase tracking-wider block mb-1">Your Score</span>
-              <span className="text-4xl font-extrabold text-cyan-400">{score} pts</span>
-            </div>
-          </div>
-        )}
+        <Trophy className="w-16 h-16 text-amber-400 mx-auto mb-4" />
+        <h2 className="text-2xl font-bold text-white mb-2">Assessment Submitted!</h2>
+        <p className="text-slate-400 text-sm mb-6">Great job! Your responses have been submitted to the host portal.</p>
+        <div className="bg-slate-800/60 p-6 rounded-xl mb-6">
+          <span className="text-slate-400 text-xs uppercase tracking-wider block mb-1">Your Score</span>
+          <span className="text-4xl font-extrabold text-cyan-400">{score} pts</span>
+        </div>
       </div>
     );
   }
@@ -266,7 +415,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
           <ul className="text-xs text-amber-200/80 space-y-1 list-disc list-inside">
             <li>Tab switching, window minimization, or app blurring triggers a strike.</li>
             <li>Exiting fullscreen triggers a strike.</li>
-            <li>Reaching 3 strikes results in immediate disqualification.</li>
+            <li>Reaching 3 strikes results in permanent disqualification for this session.</li>
           </ul>
         </div>
 
