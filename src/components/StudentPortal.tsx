@@ -15,7 +15,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     return params.get('quiz') || params.get('quizId') || quizIdFromUrl || propQuizId || '';
   });
 
-  // Check if this device is already disqualified from a previous attempt
+  // Persistent Disqualification Lockout
   const isAlreadyDisqualified = resolvedQuizId 
     ? localStorage.getItem(`quizguard_disqualified_${resolvedQuizId}`) === 'true' 
     : false;
@@ -51,7 +51,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
   const [isAssessmentStopped, setIsAssessmentStopped] = useState<boolean>(false);
   const [score, setScore] = useState<number>(0);
 
-  // Extract quiz ID if not present initially
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const targetId = params.get('quiz') || params.get('quizId') || quizIdFromUrl || propQuizId || '';
@@ -72,7 +71,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
   const loadQuiz = async (id: string) => {
     setLoadingQuiz(true);
     
-    // Check if device was disqualified locally
     if (localStorage.getItem(`quizguard_disqualified_${id}`) === 'true') {
       setDisqualified(true);
       setIsFinished(true);
@@ -86,13 +84,14 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
       if (loaded.theme) applyGlobalTheme(loaded.theme);
       if (loaded.pacingMode === 'ended' || (loaded as any).status === 'ended') {
         setIsAssessmentStopped(true);
+      } else {
+        setIsAssessmentStopped(false);
       }
       if (loaded.questions && loaded.questions[0]) {
         setTimeLeft(loaded.questions[0].timeLimit || 30);
       }
     }
 
-    // Cross-verify with Supabase for persistent lockout on this participant ID
     if (supabase && participantId) {
       try {
         const { data: pData } = await supabase
@@ -118,7 +117,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     setLoadingQuiz(false);
   };
 
-  // Listen to Host Theme and Stop broadcasts
+  // Real-time messages (Theme, Stop, Resume)
   useEffect(() => {
     const unsubscribe = subscribeToMessages((msg: any) => {
       if (msg.type === 'THEME_CHANGE' && msg.theme) {
@@ -127,13 +126,16 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
       if (msg.type === 'STOP_QUIZ' && msg.quizId === resolvedQuizId) {
         setIsAssessmentStopped(true);
       }
+      if (msg.type === 'RESUME_QUIZ' && msg.quizId === resolvedQuizId) {
+        setIsAssessmentStopped(false);
+      }
     });
     return () => unsubscribe();
   }, [resolvedQuizId]);
 
-  // Periodic poll to check if Host stopped the assessment across devices
+  // Polling to keep Stop/Resume state continuously synchronized
   useEffect(() => {
-    if (!resolvedQuizId || !supabase || isAssessmentStopped) return;
+    if (!resolvedQuizId || !supabase) return;
 
     const checkHostStop = async () => {
       try {
@@ -143,9 +145,14 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
           .eq('id', `QUIZ_STATE_${resolvedQuizId}`)
           .maybeSingle();
 
-        if (ctrlData && ctrlData.status === 'ENDED') {
-          setIsAssessmentStopped(true);
-          return;
+        if (ctrlData) {
+          if (ctrlData.status === 'ENDED') {
+            setIsAssessmentStopped(true);
+            return;
+          } else if (ctrlData.status === 'LIVE') {
+            setIsAssessmentStopped(false);
+            return;
+          }
         }
 
         const { data: qData } = await supabase
@@ -154,15 +161,19 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
           .eq('id', resolvedQuizId)
           .maybeSingle();
 
-        if (qData && qData.pacing_mode === 'ended') {
-          setIsAssessmentStopped(true);
+        if (qData) {
+          if (qData.pacing_mode === 'ended') {
+            setIsAssessmentStopped(true);
+          } else {
+            setIsAssessmentStopped(false);
+          }
         }
       } catch (e) {}
     };
 
-    const interval = setInterval(checkHostStop, 2500);
+    const interval = setInterval(checkHostStop, 2000);
     return () => clearInterval(interval);
-  }, [resolvedQuizId, isAssessmentStopped]);
+  }, [resolvedQuizId]);
 
   // Anti-cheat detection listeners
   useEffect(() => {
@@ -206,7 +217,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
       setDisqualified(true);
       setIsFinished(true);
 
-      // Lock this device permanently for this assessment
       localStorage.setItem(`quizguard_disqualified_${resolvedQuizId}`, 'true');
       localStorage.setItem(`quizguard_status_${resolvedQuizId}`, 'Disqualified');
       localStorage.setItem(`quizguard_violations_${resolvedQuizId}`, JSON.stringify(updatedViolations));
@@ -225,7 +235,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     }
   };
 
-  // Countdown timer for automatic pacing
+  // Timer for auto pacing
   useEffect(() => {
     if (!isJoined || isFinished || disqualified || isAssessmentStopped || !quiz) return;
     if (quiz.pacingMode !== 'auto') return;
@@ -253,7 +263,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     e.preventDefault();
     if (!name.trim()) return;
 
-    // Check device lockout before allowing entry
     if (localStorage.getItem(`quizguard_disqualified_${resolvedQuizId}`) === 'true') {
       setDisqualified(true);
       setIsFinished(true);
@@ -326,7 +335,30 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     );
   }
 
-  // Assessment Stopped / Ended by Host Screen
+  // Persistent Disqualification Screen
+  if (disqualified) {
+    return (
+      <div className="max-w-lg mx-auto my-12 p-8 bg-slate-900 border border-rose-500/30 rounded-3xl text-center shadow-2xl">
+        <div className="p-3 bg-rose-500/10 rounded-2xl w-fit mx-auto mb-4 border border-rose-500/20">
+          <ShieldAlert className="w-12 h-12 text-rose-500" />
+        </div>
+        <h2 className="text-2xl font-black text-rose-400 mb-2">Session Disqualified</h2>
+        <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+          This device exceeded the maximum integrity threshold (3 strikes). Your session is locked and cannot be retaken for this assessment.
+        </p>
+        <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 text-left space-y-2 text-xs font-mono max-h-48 overflow-y-auto">
+          <span className="text-slate-400 block font-bold mb-1">Recorded Proctor Violations:</span>
+          {violations.map((v, i) => (
+            <div key={i} className="text-rose-400">
+              • [{v.timestamp}] {v.message}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Assessment Stopped / Paused Screen
   if (isAssessmentStopped) {
     return (
       <div className="max-w-md mx-auto my-12 p-8 bg-slate-900 border border-slate-800 rounded-3xl text-center shadow-2xl">
@@ -335,7 +367,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
         </div>
         <h2 className="text-2xl font-bold text-white mb-2">Assessment Ended</h2>
         <p className="text-slate-400 text-sm mb-6 leading-relaxed">
-          This assessment has been closed by the host. No further questions or attempts can be submitted.
+          This assessment has been paused or closed by the host. Please wait if the host resumes the session.
         </p>
         {score > 0 && (
           <div className="bg-slate-800/60 p-4 rounded-xl mb-4 border border-slate-700/60">
@@ -361,29 +393,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
         >
           Go to Home
         </button>
-      </div>
-    );
-  }
-
-  // Persistent Disqualification Screen (Survives Refresh)
-  if (disqualified) {
-    return (
-      <div className="max-w-lg mx-auto my-12 p-8 bg-slate-900 border border-rose-500/30 rounded-3xl text-center shadow-2xl">
-        <div className="p-3 bg-rose-500/10 rounded-2xl w-fit mx-auto mb-4 border border-rose-500/20">
-          <ShieldAlert className="w-12 h-12 text-rose-500" />
-        </div>
-        <h2 className="text-2xl font-black text-rose-400 mb-2">Session Disqualified</h2>
-        <p className="text-slate-400 text-sm mb-6 leading-relaxed">
-          This device exceeded the maximum integrity threshold (3 strikes). Your session is locked and cannot be retaken for this assessment.
-        </p>
-        <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 text-left space-y-2 text-xs font-mono max-h-48 overflow-y-auto">
-          <span className="text-slate-400 block font-bold mb-1">Recorded Proctor Violations:</span>
-          {violations.map((v, i) => (
-            <div key={i} className="text-rose-400">
-              • [{v.timestamp}] {v.message}
-            </div>
-          ))}
-        </div>
       </div>
     );
   }

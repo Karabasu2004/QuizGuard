@@ -4,7 +4,7 @@ import { broadcastMessage, subscribeToMessages, saveQuiz, applyGlobalTheme, supa
 import { PieChart } from './PieChart';
 import { 
   Shield, Plus, Copy, Check, ExternalLink, LogOut, Trash2, Users, 
-  Clock, Palette, CheckCircle2, Lock, Mail, User, RefreshCw, StopCircle
+  Clock, Palette, CheckCircle2, Lock, Mail, User, RefreshCw, StopCircle, PlayCircle
 } from 'lucide-react';
 
 interface HostProps {
@@ -242,7 +242,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   // Host Stop Assessment: affects all participants
   const handleStopAssessment = async () => {
     if (!activeQuiz) return;
-    if (!window.confirm('Are you sure you want to stop this assessment? All connected participants will be halted immediately.')) {
+    if (!window.confirm('Are you sure you want to pause/stop this assessment? All connected participants will be halted.')) {
       return;
     }
 
@@ -250,13 +250,11 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     setActiveQuiz(updated);
     saveQuiz(updated);
 
-    // 1. Broadcast stop event locally
     broadcastMessage({
       type: 'STOP_QUIZ' as any,
       quizId: activeQuiz.id,
     });
 
-    // 2. Persist stop state to Supabase for all participant devices
     if (supabase) {
       try {
         await supabase.from('participants').upsert({
@@ -269,10 +267,58 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           violations: [],
           updated_at: new Date().toISOString()
         });
-
         await supabase.from('quizzes').update({ pacing_mode: 'ended' }).eq('id', activeQuiz.id);
       } catch (e) {}
     }
+  };
+
+  // Host Resume Assessment: reactivates for all participants
+  const handleResumeAssessment = async (quizToResume?: Quiz) => {
+    const targetQuiz = quizToResume || activeQuiz;
+    if (!targetQuiz) return;
+
+    const updated: Quiz = { ...targetQuiz, status: 'live' };
+    setActiveQuiz(updated);
+    saveQuiz(updated);
+
+    // Update in local quiz list as well
+    const stored = localStorage.getItem(`quizguard_host_quizzes_${hostEmail}`);
+    if (stored) {
+      const list: Quiz[] = JSON.parse(stored);
+      const updatedList = list.map(q => q.id === targetQuiz.id ? updated : q);
+      setQuizzes(updatedList);
+      localStorage.setItem(`quizguard_host_quizzes_${hostEmail}`, JSON.stringify(updatedList));
+    }
+
+    onThemeChange(updated.theme);
+    applyGlobalTheme(updated.theme);
+
+    // Notify participants to resume
+    broadcastMessage({
+      type: 'RESUME_QUIZ' as any,
+      quizId: targetQuiz.id,
+    });
+
+    if (supabase) {
+      try {
+        await supabase.from('participants').upsert({
+          id: `QUIZ_STATE_${targetQuiz.id}`,
+          quiz_id: targetQuiz.id,
+          name: '__QUIZ_STATE__',
+          status: 'LIVE',
+          score: 0,
+          strikes: 0,
+          violations: [],
+          updated_at: new Date().toISOString()
+        });
+        await supabase.from('quizzes').update({ pacing_mode: targetQuiz.pacingMode || 'manual' }).eq('id', targetQuiz.id);
+      } catch (e) {}
+    }
+  };
+
+  // When clicking an assessment from "Your Saved Assessments", open and automatically reactivate it
+  const handleOpenSavedQuiz = (q: Quiz) => {
+    handleResumeAssessment(q);
   };
 
   const shareableUrl = activeQuiz 
@@ -449,7 +495,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   }
 
   if (activeQuiz) {
-    // Sorted by score descending; Disqualified candidates placed last
+    // Ranked by score descending, Disqualified candidates always last
     const participantsList = Object.values(activeQuiz.participants || {}).sort((a, b) => {
       const aDisq = a.status === 'Disqualified';
       const bDisq = b.status === 'Disqualified';
@@ -486,9 +532,9 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
         <div className="flex flex-wrap items-center justify-between bg-slate-900/60 border border-slate-800 p-5 rounded-3xl gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <span className={`w-2.5 h-2.5 rounded-full ${isQuizEnded ? 'bg-red-400' : 'bg-emerald-400 animate-ping'}`}></span>
-              <span className={`text-xs font-mono uppercase tracking-wider font-bold ${isQuizEnded ? 'text-red-400' : 'text-emerald-400'}`}>
-                {isQuizEnded ? 'Assessment Concluded' : 'Live Assessment'}
+              <span className={`w-2.5 h-2.5 rounded-full ${isQuizEnded ? 'bg-amber-400' : 'bg-emerald-400 animate-ping'}`}></span>
+              <span className={`text-xs font-mono uppercase tracking-wider font-bold ${isQuizEnded ? 'text-amber-400' : 'text-emerald-400'}`}>
+                {isQuizEnded ? 'Assessment Paused / Stopped' : 'Live Assessment Active'}
               </span>
             </div>
             <h1 className="text-2xl font-black text-white mt-1">{activeQuiz.title}</h1>
@@ -498,7 +544,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* Theme Switcher */}
+            {/* Live Theme Switcher */}
             <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-2xl border border-slate-800">
               <span className="text-xs text-slate-400 flex items-center gap-1.5 px-2">
                 <Palette className="w-3.5 h-3.5 text-cyan-400" /> Theme:
@@ -522,23 +568,26 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               ))}
             </div>
 
-            {/* Stop Assessment Button */}
-            <button
-              onClick={handleStopAssessment}
-              disabled={isQuizEnded}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition border ${
-                isQuizEnded
-                  ? 'bg-red-950/40 text-red-400/60 border-red-900/40 cursor-not-allowed'
-                  : 'bg-red-600 hover:bg-red-500 text-white border-red-500 shadow-lg shadow-red-600/20'
-              }`}
-            >
-              <StopCircle className="w-4 h-4" />
-              {isQuizEnded ? 'Assessment Stopped' : 'Stop Assessment'}
-            </button>
+            {/* Stop or Resume Assessment Button */}
+            {isQuizEnded ? (
+              <button
+                onClick={() => handleResumeAssessment()}
+                className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs border border-emerald-500 shadow-lg shadow-emerald-600/20 transition"
+              >
+                <PlayCircle className="w-4 h-4" /> Resume Assessment
+              </button>
+            ) : (
+              <button
+                onClick={handleStopAssessment}
+                className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl text-xs border border-red-500 shadow-lg shadow-red-600/20 transition"
+              >
+                <StopCircle className="w-4 h-4" /> Stop Assessment
+              </button>
+            )}
 
             <button 
               onClick={() => setActiveQuiz(null)}
-              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-xl border border-slate-700"
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-xl border border-slate-700 transition"
             >
               ? Back to Quiz Builder
             </button>
@@ -856,18 +905,14 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
             {quizzes.map((q) => (
               <div 
                 key={q.id} 
-                onClick={() => {
-                  setActiveQuiz(q);
-                  onThemeChange(q.theme);
-                  applyGlobalTheme(q.theme);
-                }}
+                onClick={() => handleOpenSavedQuiz(q)}
                 className="p-3 bg-slate-800/60 hover:bg-slate-800 rounded-xl cursor-pointer border border-slate-700/60 text-xs transition flex justify-between items-center"
               >
                 <div>
                   <span className="font-bold text-white block">{q.title}</span>
                   <span className="text-slate-400">{q.questions.length} questions • {Object.keys(q.participants || {}).length} attended</span>
                 </div>
-                <span className="text-cyan-400 font-bold">Open ?</span>
+                <span className="text-cyan-400 font-bold">Open & Resume ?</span>
               </div>
             ))}
           </div>
