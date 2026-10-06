@@ -62,10 +62,7 @@ export default function App() {
             </div>
             <div className="leading-tight">
               <span className="text-lg font-black tracking-wider text-white">
-                QUIZGUARD<span className="text-cyan-400">.LIVE</span>
-              </span>
-              <span className="block text-[10px] text-cyan-400 font-mono tracking-widest uppercase">
-                Integrity Engine v3.0
+                QUIZGUARD
               </span>
             </div>
           </div>
@@ -73,9 +70,9 @@ export default function App() {
           {role === 'host' && (
             <button 
               onClick={() => setRole('landing')}
-              className="text-xs font-semibold text-slate-400 hover:text-white px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 transition"
+              className="text-xs font-semibold text-white px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 border border-blue-500 shadow-md shadow-blue-600/20 transition"
             >
-              ? Back to Main Menu
+              Back
             </button>
           )}
         </div>

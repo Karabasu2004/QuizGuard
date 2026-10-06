@@ -40,14 +40,12 @@ const getOrSetShuffledQuestions = (quizId: string, originalQuestions: Question[]
         }
       });
 
-      // Append any new questions if the host edited the quiz
       qMap.forEach((q) => restored.push(q));
 
       if (restored.length > 0) return restored;
     } catch (e) {}
   }
 
-  // Generate fresh randomized order for this participant
   const randomized = shuffleQuestions(originalQuestions);
   localStorage.setItem(storageKey, JSON.stringify(randomized.map((q) => q.id)));
   return randomized;
@@ -59,7 +57,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     return params.get('quiz') || params.get('quizId') || quizIdFromUrl || propQuizId || '';
   });
 
-  // Persistent Disqualification Lockout
   const isAlreadyDisqualified = resolvedQuizId 
     ? localStorage.getItem(`quizguard_disqualified_${resolvedQuizId}`) === 'true' 
     : false;
@@ -103,7 +100,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     }
   }, [propQuizId, quizIdFromUrl]);
 
-  // Load Quiz & Check Persistent Lockout
   useEffect(() => {
     if (!resolvedQuizId) {
       setLoadingQuiz(false);
@@ -124,7 +120,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
     const loaded = await getSavedQuiz(id);
     if (loaded) {
-      // Shuffle questions specifically for this participant
       if (loaded.questions && loaded.questions.length > 0) {
         loaded.questions = getOrSetShuffledQuestions(id, loaded.questions);
       }
@@ -166,7 +161,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     setLoadingQuiz(false);
   };
 
-  // Real-time messages (Theme, Stop, Resume)
   useEffect(() => {
     const unsubscribe = subscribeToMessages((msg: any) => {
       if (msg.type === 'THEME_CHANGE' && msg.theme) {
@@ -182,7 +176,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     return () => unsubscribe();
   }, [resolvedQuizId]);
 
-  // Polling to keep Stop/Resume state continuously synchronized
   useEffect(() => {
     if (!resolvedQuizId || !supabase) return;
 
@@ -224,7 +217,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     return () => clearInterval(interval);
   }, [resolvedQuizId]);
 
-  // Anti-cheat detection listeners
   useEffect(() => {
     if (!isJoined || isFinished || disqualified || isAssessmentStopped) return;
 
@@ -284,7 +276,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     }
   };
 
-  // Timer for auto pacing
   useEffect(() => {
     if (!isJoined || isFinished || disqualified || isAssessmentStopped || !quiz) return;
     if (quiz.pacingMode !== 'auto') return;
@@ -384,7 +375,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     );
   }
 
-  // Persistent Disqualification Screen
   if (disqualified) {
     return (
       <div className="max-w-lg mx-auto my-12 p-8 bg-slate-900 border border-rose-500/30 rounded-3xl text-center shadow-2xl">
@@ -407,7 +397,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     );
   }
 
-  // Assessment Stopped / Paused Screen
   if (isAssessmentStopped) {
     return (
       <div className="max-w-md mx-auto my-12 p-8 bg-slate-900 border border-slate-800 rounded-3xl text-center shadow-2xl">
@@ -463,8 +452,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
   if (!isJoined) {
     return (
       <div className="max-w-md mx-auto my-8 p-6 sm:p-8 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl">
-        <h2 className="text-xl font-bold text-white mb-1">{quiz.title}</h2>
-        <p className="text-slate-400 text-xs mb-6">Live Proctored Session • Pacing: {quiz.pacingMode}</p>
+        <h2 className="text-xl font-bold text-white mb-4">{quiz.title}</h2>
 
         <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl mb-6 text-left">
           <div className="flex items-center gap-2 text-amber-400 font-semibold text-xs mb-2">
@@ -479,11 +467,10 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
         <form onSubmit={handleJoin} className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1">Full Name</label>
+            <label className="block text-xs font-medium text-slate-300 mb-1">Team Name</label>
             <input
               type="text"
               required
-              placeholder="e.g. John Doe"
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-cyan-500"

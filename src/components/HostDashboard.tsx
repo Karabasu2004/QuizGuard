@@ -239,7 +239,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     });
   };
 
-  // Host Stop Assessment: affects all participants
   const handleStopAssessment = async () => {
     if (!activeQuiz) return;
     if (!window.confirm('Are you sure you want to pause/stop this assessment? All connected participants will be halted.')) {
@@ -272,7 +271,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     }
   };
 
-  // Host Resume Assessment: reactivates for all participants
   const handleResumeAssessment = async (quizToResume?: Quiz) => {
     const targetQuiz = quizToResume || activeQuiz;
     if (!targetQuiz) return;
@@ -281,7 +279,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     setActiveQuiz(updated);
     saveQuiz(updated);
 
-    // Update in local quiz list as well
     const stored = localStorage.getItem(`quizguard_host_quizzes_${hostEmail}`);
     if (stored) {
       const list: Quiz[] = JSON.parse(stored);
@@ -293,7 +290,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     onThemeChange(updated.theme);
     applyGlobalTheme(updated.theme);
 
-    // Notify participants to resume
     broadcastMessage({
       type: 'RESUME_QUIZ' as any,
       quizId: targetQuiz.id,
@@ -316,7 +312,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     }
   };
 
-  // When clicking an assessment from "Your Saved Assessments", open and automatically reactivate it
   const handleOpenSavedQuiz = (q: Quiz) => {
     handleResumeAssessment(q);
   };
@@ -495,7 +490,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   }
 
   if (activeQuiz) {
-    // Ranked by score descending, Disqualified candidates always last
     const participantsList = Object.values(activeQuiz.participants || {}).sort((a, b) => {
       const aDisq = a.status === 'Disqualified';
       const bDisq = b.status === 'Disqualified';
@@ -585,9 +579,10 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               </button>
             )}
 
+            {/* Back to Quiz Builder - Blue Background */}
             <button 
               onClick={() => setActiveQuiz(null)}
-              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-xl border border-slate-700 transition"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl border border-blue-500 shadow-md shadow-blue-600/20 transition"
             >
               ? Back to Quiz Builder
             </button>
@@ -825,7 +820,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
             {draftQuestions.map((q, i) => (
               <div key={q.id} className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex items-center justify-between">
                 <div>
-                  <span className="text-xs text-cyan-400 font-mono">Q{i + 1} ({q.timeLimit}s)</span>
+                  <span className="text-xs font-cyan-400 font-mono">Q{i + 1} ({q.timeLimit}s)</span>
                   <p className="text-sm font-semibold text-white">{q.text}</p>
                   <p className="text-xs text-emerald-400 font-mono mt-0.5">
                     Correct: Option {String.fromCharCode(65 + q.correctAnswer)} ({q.options[q.correctAnswer]})
