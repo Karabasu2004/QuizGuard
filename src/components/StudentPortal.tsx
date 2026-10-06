@@ -9,6 +9,50 @@ interface StudentPortalProps {
   onExit?: () => void;
 }
 
+// Fisher-Yates shuffle algorithm
+const shuffleQuestions = (items: Question[]): Question[] => {
+  const shuffled = [...items];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+};
+
+// Retrieve or generate randomized question order for this device
+const getOrSetShuffledQuestions = (quizId: string, originalQuestions: Question[]): Question[] => {
+  if (!originalQuestions || originalQuestions.length === 0) return [];
+
+  const storageKey = `quizguard_q_order_${quizId}`;
+  const savedOrderRaw = localStorage.getItem(storageKey);
+
+  if (savedOrderRaw) {
+    try {
+      const savedIds: string[] = JSON.parse(savedOrderRaw);
+      const qMap = new Map(originalQuestions.map((q) => [q.id, q]));
+      const restored: Question[] = [];
+
+      savedIds.forEach((id) => {
+        const q = qMap.get(id);
+        if (q) {
+          restored.push(q);
+          qMap.delete(id);
+        }
+      });
+
+      // Append any new questions if the host edited the quiz
+      qMap.forEach((q) => restored.push(q));
+
+      if (restored.length > 0) return restored;
+    } catch (e) {}
+  }
+
+  // Generate fresh randomized order for this participant
+  const randomized = shuffleQuestions(originalQuestions);
+  localStorage.setItem(storageKey, JSON.stringify(randomized.map((q) => q.id)));
+  return randomized;
+};
+
 export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId, quizIdFromUrl, onExit }) => {
   const [resolvedQuizId, setResolvedQuizId] = useState<string>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -80,6 +124,11 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
     const loaded = await getSavedQuiz(id);
     if (loaded) {
+      // Shuffle questions specifically for this participant
+      if (loaded.questions && loaded.questions.length > 0) {
+        loaded.questions = getOrSetShuffledQuestions(id, loaded.questions);
+      }
+
       setQuiz(loaded);
       if (loaded.theme) applyGlobalTheme(loaded.theme);
       if (loaded.pacingMode === 'ended' || (loaded as any).status === 'ended') {
