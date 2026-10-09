@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Quiz, Question, ThemeColor } from '../types';
 import { getSavedQuiz, applyGlobalTheme, subscribeToMessages, supabase } from '../supabase';
-import { ShieldAlert, CheckCircle, AlertTriangle, Maximize, Clock, Trophy, AlertOctagon } from 'lucide-react';
+import { ShieldAlert, CheckCircle, AlertTriangle, Maximize, Clock, Trophy, AlertOctagon, Edit3 } from 'lucide-react';
 
 interface StudentPortalProps {
   quizId?: string;
@@ -74,7 +74,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
   });
 
   const [currentIdx, setCurrentIdx] = useState<number>(0);
-  const [answers, setAnswers] = useState<Record<string, number>>({});
+  const [answers, setAnswers] = useState<Record<string, number | string>>({});
   const [timeLeft, setTimeLeft] = useState<number>(30);
   const [strikes, setStrikes] = useState<number>(isAlreadyDisqualified ? 3 : 0);
   const [violations, setViolations] = useState<Array<{ timestamp: string; message: string }>>(() => {
@@ -339,12 +339,27 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     setAnswers((prev) => ({ ...prev, [currentQ.id]: optIdx }));
   };
 
+  const handleTextAnswer = (val: string) => {
+    if (!quiz || isAssessmentStopped) return;
+    const currentQ = quiz.questions[currentIdx];
+    setAnswers((prev) => ({ ...prev, [currentQ.id]: val }));
+  };
+
   const handleSubmit = async () => {
     if (!quiz || isAssessmentStopped) return;
     let totalScore = 0;
+
     quiz.questions.forEach((q) => {
-      if (answers[q.id] === q.correctAnswer) {
-        totalScore += 10;
+      if (q.type === 'fib') {
+        const studentText = String(answers[q.id] || '').trim().toLowerCase();
+        const expectedText = String(q.correctAnswer || '').trim().toLowerCase();
+        if (studentText.length > 0 && studentText === expectedText) {
+          totalScore += 10;
+        }
+      } else {
+        if (Number(answers[q.id]) === Number(q.correctAnswer)) {
+          totalScore += 10;
+        }
       }
     });
 
@@ -489,15 +504,21 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
   }
 
   const currentQ = quiz.questions[currentIdx];
+  const isFibQuestion = currentQ.type === 'fib' || !currentQ.options || currentQ.options.length === 0;
 
   return (
     <div className="max-w-2xl mx-auto my-6 p-6 sm:p-8 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl">
       <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-6">
         <div>
-          <span className="text-xs font-semibold text-cyan-400 uppercase tracking-wider">
-            Question {currentIdx + 1} of {quiz.questions.length}
-          </span>
-          <h3 className="text-sm font-medium text-slate-300">{quiz.title}</h3>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-cyan-400 uppercase tracking-wider">
+              Question {currentIdx + 1} of {quiz.questions.length}
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700">
+              {isFibQuestion ? 'Fill in Blank' : 'MCQ'}
+            </span>
+          </div>
+          <h3 className="text-sm font-medium text-slate-300 mt-1">{quiz.title}</h3>
         </div>
 
         <div className="flex items-center gap-3">
@@ -519,25 +540,43 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
       <div className="mb-6">
         <h2 className="text-lg font-bold text-white mb-6 leading-relaxed">{currentQ.text}</h2>
-        <div className="space-y-3">
-          {currentQ.options.map((opt, oIdx) => {
-            const isSelected = answers[currentQ.id] === oIdx;
-            return (
-              <button
-                key={oIdx}
-                onClick={() => handleSelectOption(oIdx)}
-                className={`w-full text-left p-4 rounded-xl border text-sm font-medium transition flex items-center justify-between ${
-                  isSelected
-                    ? 'bg-cyan-600/20 border-cyan-500 text-white'
-                    : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:border-slate-600'
-                }`}
-              >
-                <span>{opt}</span>
-                {isSelected && <CheckCircle className="w-4 h-4 text-cyan-400 shrink-0 ml-2" />}
-              </button>
-            );
-          })}
-        </div>
+
+        {/* Fill in the Blanks text input vs Multiple Choice buttons */}
+        {isFibQuestion ? (
+          <div className="space-y-3 bg-slate-950/60 p-5 rounded-2xl border border-slate-800">
+            <label className="text-xs text-slate-400 font-medium block flex items-center gap-1.5">
+              <Edit3 className="w-3.5 h-3.5 text-cyan-400" /> Enter your answer below:
+            </label>
+            <input
+              type="text"
+              autoFocus
+              placeholder="Type your answer here..."
+              value={(answers[currentQ.id] as string) || ''}
+              onChange={(e) => handleTextAnswer(e.target.value)}
+              className="w-full px-4 py-3 bg-slate-800/90 border border-slate-700 rounded-xl text-white text-base focus:outline-none focus:border-cyan-500 placeholder-slate-500 shadow-inner"
+            />
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {(currentQ.options || []).map((opt, oIdx) => {
+              const isSelected = answers[currentQ.id] === oIdx;
+              return (
+                <button
+                  key={oIdx}
+                  onClick={() => handleSelectOption(oIdx)}
+                  className={`w-full text-left p-4 rounded-xl border text-sm font-medium transition flex items-center justify-between ${
+                    isSelected
+                      ? 'bg-cyan-600/20 border-cyan-500 text-white'
+                      : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:border-slate-600'
+                  }`}
+                >
+                  <span>{opt}</span>
+                  {isSelected && <CheckCircle className="w-4 h-4 text-cyan-400 shrink-0 ml-2" />}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="flex items-center justify-between pt-4 border-t border-slate-800">

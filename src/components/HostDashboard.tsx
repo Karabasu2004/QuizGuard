@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Quiz, Question, StudentResult, ThemeColor, THEME_CONFIG } from '../types';
+import { Quiz, Question, QuestionType, StudentResult, ThemeColor, THEME_CONFIG } from '../types';
 import { broadcastMessage, subscribeToMessages, saveQuiz, applyGlobalTheme, supabase } from '../supabase';
 import { PieChart } from './PieChart';
 import { 
   Shield, Plus, Copy, Check, ExternalLink, LogOut, Trash2, Users, 
-  Clock, Palette, CheckCircle2, Lock, Mail, User, RefreshCw, StopCircle, PlayCircle
+  Clock, Palette, CheckCircle2, Lock, Mail, User, RefreshCw, StopCircle, PlayCircle, Edit3
 } from 'lucide-react';
 
 interface HostProps {
@@ -34,12 +34,15 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   const [pacingMode, setPacingMode] = useState<'manual' | 'auto'>('manual');
   const [selectedTheme, setSelectedTheme] = useState<ThemeColor>('slate');
 
+  // Question Form States
+  const [qType, setQType] = useState<QuestionType>('mcq');
   const [qText, setQText] = useState('');
   const [optA, setOptA] = useState('');
   const [optB, setOptB] = useState('');
   const [optC, setOptC] = useState('');
   const [optD, setOptD] = useState('');
   const [correctOpt, setCorrectOpt] = useState<number>(0);
+  const [fibAnswer, setFibAnswer] = useState('');
   const [qTimer, setQTimer] = useState<number>(30);
   const [draftQuestions, setDraftQuestions] = useState<Question[]>([]);
 
@@ -167,26 +170,52 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
 
   const handleAddQuestion = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!qText.trim() || !optA.trim() || !optB.trim() || !optC.trim() || !optD.trim()) {
-      alert('Please fill out question prompt and all 4 options.');
+    if (!qText.trim()) {
+      alert('Please fill out the question prompt.');
       return;
     }
 
-    const newQ: Question = {
-      id: `q_${Date.now()}`,
-      text: qText,
-      options: [optA, optB, optC, optD],
-      correctAnswer: correctOpt,
-      timeLimit: Number(qTimer) || 30,
-    };
+    if (qType === 'mcq') {
+      if (!optA.trim() || !optB.trim() || !optC.trim() || !optD.trim()) {
+        alert('Please fill out all 4 multiple choice options.');
+        return;
+      }
 
-    setDraftQuestions([...draftQuestions, newQ]);
+      const newQ: Question = {
+        id: `q_${Date.now()}`,
+        type: 'mcq',
+        text: qText,
+        options: [optA, optB, optC, optD],
+        correctAnswer: correctOpt,
+        timeLimit: Number(qTimer) || 30,
+      };
+
+      setDraftQuestions([...draftQuestions, newQ]);
+      setOptA('');
+      setOptB('');
+      setOptC('');
+      setOptD('');
+      setCorrectOpt(0);
+    } else {
+      if (!fibAnswer.trim()) {
+        alert('Please enter the expected correct answer for the blank.');
+        return;
+      }
+
+      const newQ: Question = {
+        id: `q_${Date.now()}`,
+        type: 'fib',
+        text: qText,
+        options: [],
+        correctAnswer: fibAnswer.trim(),
+        timeLimit: Number(qTimer) || 30,
+      };
+
+      setDraftQuestions([...draftQuestions, newQ]);
+      setFibAnswer('');
+    }
+
     setQText('');
-    setOptA('');
-    setOptB('');
-    setOptC('');
-    setOptD('');
-    setCorrectOpt(0);
   };
 
   const handleLaunchQuiz = async () => {
@@ -538,7 +567,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* Live Theme Switcher */}
             <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-2xl border border-slate-800">
               <span className="text-xs text-slate-400 flex items-center gap-1.5 px-2">
                 <Palette className="w-3.5 h-3.5 text-cyan-400" /> Theme:
@@ -562,7 +590,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               ))}
             </div>
 
-            {/* Stop or Resume Assessment Button */}
             {isQuizEnded ? (
               <button
                 onClick={() => handleResumeAssessment()}
@@ -579,7 +606,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               </button>
             )}
 
-            {/* Back to Quiz Builder - Blue Background */}
             <button 
               onClick={() => setActiveQuiz(null)}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl border border-blue-500 shadow-md shadow-blue-600/20 transition"
@@ -742,54 +768,107 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-4">
-            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-              <Plus className="text-cyan-400 w-5 h-5" /> Add Question & Set Timer
-            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <Plus className="text-cyan-400 w-5 h-5" /> Add New Question
+              </h2>
+
+              {/* Question Format Switcher */}
+              <div className="flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setQType('mcq')}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition ${
+                    qType === 'mcq'
+                      ? 'bg-cyan-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Multiple Choice
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQType('fib')}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
+                    qType === 'fib'
+                      ? 'bg-cyan-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Edit3 className="w-3.5 h-3.5" /> Fill in the Blanks
+                </button>
+              </div>
+            </div>
+
             <form onSubmit={handleAddQuestion} className="space-y-4">
               <div>
                 <label className="text-xs text-slate-400 block mb-1 font-medium">Question Prompt</label>
                 <textarea
                   required
                   rows={2}
-                  placeholder="e.g. Which consensus mechanism avoids forks under network partition?"
+                  placeholder={
+                    qType === 'mcq' 
+                      ? "e.g. Which consensus mechanism avoids forks under network partition?" 
+                      : "e.g. The Byzantine Generals Problem is solved in distributed systems using ____ algorithm."
+                  }
                   value={qText}
                   onChange={(e) => setQText(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800/80 border border-slate-700 text-white text-sm focus:outline-none focus:border-cyan-500"
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {[
-                  { label: 'Option A', val: optA, set: setOptA, idx: 0 },
-                  { label: 'Option B', val: optB, set: setOptB, idx: 1 },
-                  { label: 'Option C', val: optC, set: setOptC, idx: 2 },
-                  { label: 'Option D', val: optD, set: setOptD, idx: 3 },
-                ].map((item) => (
-                  <div key={item.idx} className="space-y-1">
-                    <div className="flex items-center justify-between text-xs text-slate-400">
-                      <span>{item.label}</span>
-                      <label className="flex items-center gap-1 cursor-pointer">
-                        <input
-                          type="radio"
-                          name="correctOption"
-                          checked={correctOpt === item.idx}
-                          onChange={() => setCorrectOpt(item.idx)}
-                          className="accent-cyan-500"
-                        />
-                        <span className={correctOpt === item.idx ? 'text-cyan-400 font-bold' : ''}>Correct</span>
-                      </label>
+              {/* Conditional Inputs: MCQ vs Fill in the Blanks */}
+              {qType === 'mcq' ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[
+                    { label: 'Option A', val: optA, set: setOptA, idx: 0 },
+                    { label: 'Option B', val: optB, set: setOptB, idx: 1 },
+                    { label: 'Option C', val: optC, set: setOptC, idx: 2 },
+                    { label: 'Option D', val: optD, set: setOptD, idx: 3 },
+                  ].map((item) => (
+                    <div key={item.idx} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs text-slate-400">
+                        <span>{item.label}</span>
+                        <label className="flex items-center gap-1 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="correctOption"
+                            checked={correctOpt === item.idx}
+                            onChange={() => setCorrectOpt(item.idx)}
+                            className="accent-cyan-500"
+                          />
+                          <span className={correctOpt === item.idx ? 'text-cyan-400 font-bold' : ''}>Correct</span>
+                        </label>
+                      </div>
+                      <input
+                        type="text"
+                        required
+                        placeholder={`Enter ${item.label}`}
+                        value={item.val}
+                        onChange={(e) => item.set(e.target.value)}
+                        className={`w-full px-3 py-2 rounded-xl bg-slate-800 border text-white text-sm focus:outline-none ${correctOpt === item.idx ? 'border-cyan-500/80 bg-cyan-950/20' : 'border-slate-700'}`}
+                      />
                     </div>
-                    <input
-                      type="text"
-                      required
-                      placeholder={`Enter ${item.label}`}
-                      value={item.val}
-                      onChange={(e) => item.set(e.target.value)}
-                      className={`w-full px-3 py-2 rounded-xl bg-slate-800 border text-white text-sm focus:outline-none ${correctOpt === item.idx ? 'border-cyan-500/80 bg-cyan-950/20' : 'border-slate-700'}`}
-                    />
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-1.5 bg-slate-950/60 p-4 rounded-2xl border border-slate-800">
+                  <label className="text-xs text-cyan-300 font-medium block">
+                    Expected Correct Answer (Text)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. PBFT (evaluation is case-insensitive)"
+                    value={fibAnswer}
+                    onChange={(e) => setFibAnswer(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:border-cyan-500"
+                  />
+                  <p className="text-[11px] text-slate-500">
+                    Participant responses will be evaluated automatically, ignoring extra spaces and letter casing.
+                  </p>
+                </div>
+              )}
 
               <div className="flex items-center gap-3 pt-2">
                 <Clock className="w-4 h-4 text-cyan-400" />
@@ -820,11 +899,22 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
             {draftQuestions.map((q, i) => (
               <div key={q.id} className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex items-center justify-between">
                 <div>
-                  <span className="text-xs font-cyan-400 font-mono">Q{i + 1} ({q.timeLimit}s)</span>
-                  <p className="text-sm font-semibold text-white">{q.text}</p>
-                  <p className="text-xs text-emerald-400 font-mono mt-0.5">
-                    Correct: Option {String.fromCharCode(65 + q.correctAnswer)} ({q.options[q.correctAnswer]})
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-cyan-400 font-mono">Q{i + 1} ({q.timeLimit}s)</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700">
+                      {q.type === 'fib' ? 'Fill in Blanks' : 'MCQ'}
+                    </span>
+                  </div>
+                  <p className="text-sm font-semibold text-white mt-1">{q.text}</p>
+                  {q.type === 'fib' ? (
+                    <p className="text-xs text-emerald-400 font-mono mt-0.5">
+                      Answer: <span className="font-bold underline">{String(q.correctAnswer)}</span>
+                    </p>
+                  ) : (
+                    <p className="text-xs text-emerald-400 font-mono mt-0.5">
+                      Correct: Option {String.fromCharCode(65 + Number(q.correctAnswer))} ({q.options?.[Number(q.correctAnswer)]})
+                    </p>
+                  )}
                 </div>
                 <button onClick={() => setDraftQuestions(draftQuestions.filter((_, idx) => idx !== i))} className="text-slate-500 hover:text-red-400 p-2">
                   <Trash2 className="w-4 h-4" />
