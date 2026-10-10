@@ -168,7 +168,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
     setDraftQuestions(prev => [...prev, newQ]);
   };
 
-  // Real-time broadcast and participant submission listener
+  // Real-Time Broadcast Listener for Live Answering & Submission
   useEffect(() => {
     if (!activeQuiz) return;
 
@@ -185,14 +185,19 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
         ]);
       }
 
-      if (msg.type === 'PARTICIPANT_SUBMITTED' && msg.quizId === activeQuiz.id && msg.participant) {
+      // Live answering progress or final submission update
+      if ((msg.type === 'PARTICIPANT_LIVE_UPDATE' || msg.type === 'PARTICIPANT_SUBMITTED') && msg.quizId === activeQuiz.id && msg.participant) {
         setActiveQuiz(prev => {
           if (!prev) return null;
+          const currentP = prev.participants || {};
           return {
             ...prev,
             participants: {
-              ...(prev.participants || {}),
-              [msg.participant.id]: msg.participant
+              ...currentP,
+              [msg.participant.id]: {
+                ...currentP[msg.participant.id],
+                ...msg.participant
+              }
             }
           };
         });
@@ -202,25 +207,36 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
     return () => unsubscribe();
   }, [activeQuiz?.id]);
 
-  // Robust live participant fetcher with local storage fallback
+  // Reliable Live Participant Poller (Safely Merges Live Scores)
   useEffect(() => {
     if (!activeQuiz) return;
 
     const fetchLiveParticipants = async () => {
-      const pMap: Record<string, StudentResult> = {};
+      let mergedMap: Record<string, StudentResult> = {};
 
-      // 1. Read locally cached participant results
+      // 1. Read existing active state
+      if (activeQuiz.participants) {
+        mergedMap = { ...activeQuiz.participants };
+      }
+
+      // 2. Read local cache
       try {
         const localDirect = localStorage.getItem(`quizguard_quiz_${activeQuiz.id}`);
         if (localDirect) {
           const parsed = JSON.parse(localDirect);
           if (parsed.participants) {
-            Object.assign(pMap, parsed.participants);
+            Object.keys(parsed.participants).forEach(pId => {
+              const localP = parsed.participants[pId];
+              const cur = mergedMap[pId];
+              if (!cur || Number(localP.score || 0) >= Number(cur.score || 0)) {
+                mergedMap[pId] = { ...(cur || {}), ...localP };
+              }
+            });
           }
         }
       } catch (e) {}
 
-      // 2. Fetch from Supabase and decode evaluation results
+      // 3. Query Supabase without overwriting higher live scores with 0
       if (supabase) {
         try {
           const { data, error } = await supabase
@@ -230,65 +246,41 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
 
           if (data && !error) {
             data.filter((p: any) => !p.id.startsWith('QUIZ_STATE_')).forEach((p: any) => {
+              const cur = mergedMap[p.id];
+              const dbScore = typeof p.score === 'number' ? p.score : Number(p.score || 0);
+              const bestScore = Math.max(dbScore, Number(cur?.score || 0));
+              const bestStatus = (cur?.status === 'Completed' || p.status === 'Completed') 
+                ? 'Completed' 
+                : (p.status || cur?.status || 'Active');
+
               let vList = p.violations;
               if (typeof vList === 'string') {
                 try { vList = JSON.parse(vList); } catch (e) { vList = []; }
               }
 
-              let pAnswers = p.answers || {};
-              if (typeof pAnswers === 'string') {
-                try { pAnswers = JSON.parse(pAnswers); } catch (e) { pAnswers = {}; }
-              }
-
-              const pEval = pAnswers.__evaluation || {};
-
-              let totalCorrect = p.total_correct ?? pEval.totalCorrect;
-              let totalWrong = p.total_wrong ?? pEval.totalWrong;
-              let totalSkipped = p.total_skipped ?? pEval.totalSkipped;
-
-              // Automatic fallback calculation if metrics were not stored directly
-              if (totalCorrect === undefined && activeQuiz.questions && (p.status === 'Completed' || p.score > 0)) {
-                let c = 0, w = 0, s = 0;
-                activeQuiz.questions.forEach(q => {
-                  const ans = pAnswers[q.id];
-                  if (ans === undefined || ans === null || String(ans).trim() === '') s++;
-                  else if (q.type === 'mcq' && Number(ans) === Number(q.correctAnswer)) c++;
-                  else if (q.type === 'fib' && String(ans).trim().toLowerCase() === String(q.correctAnswer).trim().toLowerCase()) c++;
-                  else if (q.type === 'multi_fib') {
-                    const cList = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
-                    const uList = Array.isArray(ans) ? ans : [];
-                    const matches = cList.filter((exp, idx) => String(uList[idx] || '').trim().toLowerCase() === String(exp).trim().toLowerCase()).length;
-                    if (matches > 0) c++; else w++;
-                  } else w++;
-                });
-                totalCorrect = c;
-                totalWrong = w;
-                totalSkipped = s;
-              }
-
-              pMap[p.id] = {
+              mergedMap[p.id] = {
                 id: p.id,
                 name: p.name,
-                score: typeof p.score === 'number' ? p.score : Number(p.score || 0),
-                timeTakenSeconds: p.time_taken || 0,
-                strikes: p.strikes || 0,
-                status: p.status || 'Active',
-                violations: Array.isArray(vList) ? vList : [],
-                answers: pAnswers,
-                reviewFlags: p.review_flags || pEval.reviewFlags || {},
-                sectionSummaries: p.section_summaries || pEval.sectionSummaries || {},
-                questionDetails: p.question_details || pEval.questionDetails || {},
-                totalCorrect: totalCorrect ?? 0,
-                totalWrong: totalWrong ?? 0,
-                totalSkipped: totalSkipped ?? 0,
-                submittedAt: p.updated_at
+                score: bestScore,
+                timeTakenSeconds: p.time_taken || cur?.timeTakenSeconds || 0,
+                strikes: p.strikes || cur?.strikes || 0,
+                status: bestStatus,
+                violations: Array.isArray(vList) ? vList : (cur?.violations || []),
+                answers: p.answers || cur?.answers || {},
+                reviewFlags: cur?.reviewFlags || {},
+                sectionSummaries: cur?.sectionSummaries || {},
+                questionDetails: cur?.questionDetails || {},
+                totalCorrect: cur?.totalCorrect ?? 0,
+                totalWrong: cur?.totalWrong ?? 0,
+                totalSkipped: cur?.totalSkipped ?? 0,
+                submittedAt: p.updated_at || cur?.submittedAt
               };
             });
           }
         } catch (e) {}
       }
 
-      setActiveQuiz((prev) => (prev ? { ...prev, participants: pMap } : null));
+      setActiveQuiz((prev) => (prev ? { ...prev, participants: mergedMap } : null));
     };
 
     fetchLiveParticipants();
@@ -926,13 +918,14 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
   }
 
   if (activeQuiz) {
+    // Correct Leaderboard Sorting: Score DESC, then Time Taken ASC
     const participantsList = Object.values(activeQuiz.participants || {}).sort((a, b) => {
       const aDisq = a.status === 'Disqualified';
       const bDisq = b.status === 'Disqualified';
       if (aDisq && !bDisq) return 1;
       if (!aDisq && bDisq) return -1;
-      if ((b.score || 0) !== (a.score || 0)) {
-        return (b.score || 0) - (a.score || 0);
+      if (Number(b.score || 0) !== Number(a.score || 0)) {
+        return Number(b.score || 0) - Number(a.score || 0);
       }
       return (a.timeTakenSeconds || 0) - (b.timeTakenSeconds || 0);
     });
@@ -1146,80 +1139,84 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                 </tr>
               </thead>
               <tbody className={`divide-y ${isLight ? 'divide-slate-200 bg-white' : 'divide-slate-800/60'}`}>
-                {participantsList.map((s, idx) => (
-                  <tr key={s.id} className={`transition ${isLight ? 'hover:bg-slate-50' : 'hover:bg-slate-800/20'}`}>
-                    <td className="py-3 px-4 font-mono font-bold">
-                      <div className="flex items-center gap-1.5">
-                        {idx === 0 && s.status !== 'Disqualified' && <Trophy className="w-4 h-4 text-amber-500 shrink-0" />}
-                        {idx === 1 && s.status !== 'Disqualified' && <Award className="w-4 h-4 text-slate-400 shrink-0" />}
-                        {idx === 2 && s.status !== 'Disqualified' && <Award className="w-4 h-4 text-amber-700 shrink-0" />}
-                        <span className={isLight ? 'text-blue-700' : 'text-cyan-400'}>#{idx + 1}</span>
-                      </div>
-                    </td>
-                    <td className={`py-3 px-4 font-semibold ${textPrimary}`}>{s.name}</td>
-                    <td className={`py-3 px-4 font-mono font-bold ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>
-                      {s.score} / {totalMax} pts
-                    </td>
-                    <td className={`py-3 px-4 font-mono text-xs ${textMuted}`}>
-                      {s.timeTakenSeconds ? `${Math.floor(s.timeTakenSeconds / 60)}m ${s.timeTakenSeconds % 60}s` : '0m 0s'}
-                    </td>
-                    <td className="py-3 px-4 font-mono text-xs">
-                      <div className="flex items-center gap-2">
-                        <span className="text-emerald-600 font-bold flex items-center gap-0.5">
-                          <Check className="w-3.5 h-3.5" /> {s.totalCorrect || 0}
-                        </span>
-                        <span className="text-rose-600 font-bold flex items-center gap-0.5">
-                          <X className="w-3.5 h-3.5" /> {s.totalWrong || 0}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                        s.status === 'Disqualified'
-                          ? 'bg-red-50 text-red-600 border border-red-200'
-                          : s.status === 'Completed'
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          : 'bg-blue-50 text-blue-700 border border-blue-200'
-                      }`}>
-                        {s.status}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => handleAdjustStrikes(s, s.strikes - 1)}
-                          disabled={s.strikes === 0}
-                          className={`px-1.5 py-0.5 rounded text-[10px] border disabled:opacity-30 ${buttonSecCls}`}
-                          title="Forgive strike"
-                        >
-                          -
-                        </button>
-                        <span className={`font-mono font-bold px-2 py-0.5 rounded text-xs ${
-                          s.strikes === 0 ? (isLight ? 'bg-slate-100 text-slate-600' : 'bg-slate-800 text-slate-400') :
-                          s.strikes >= 3 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'
+                {participantsList.map((s, idx) => {
+                  const hasPoints = Number(s.score || 0) > 0 || s.status === 'Completed';
+
+                  return (
+                    <tr key={s.id} className={`transition ${isLight ? 'hover:bg-slate-50' : 'hover:bg-slate-800/20'}`}>
+                      <td className="py-3 px-4 font-mono font-bold">
+                        <div className="flex items-center gap-1.5">
+                          {idx === 0 && hasPoints && s.status !== 'Disqualified' && <Trophy className="w-4 h-4 text-amber-500 shrink-0" />}
+                          {idx === 1 && hasPoints && s.status !== 'Disqualified' && <Award className="w-4 h-4 text-slate-400 shrink-0" />}
+                          {idx === 2 && hasPoints && s.status !== 'Disqualified' && <Award className="w-4 h-4 text-amber-700 shrink-0" />}
+                          <span className={isLight ? 'text-blue-700' : 'text-cyan-400'}>#{idx + 1}</span>
+                        </div>
+                      </td>
+                      <td className={`py-3 px-4 font-semibold ${textPrimary}`}>{s.name}</td>
+                      <td className={`py-3 px-4 font-mono font-bold ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>
+                        {s.score} / {totalMax} pts
+                      </td>
+                      <td className={`py-3 px-4 font-mono text-xs ${textMuted}`}>
+                        {s.timeTakenSeconds ? `${Math.floor(s.timeTakenSeconds / 60)}m ${s.timeTakenSeconds % 60}s` : '0m 0s'}
+                      </td>
+                      <td className="py-3 px-4 font-mono text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-600 font-bold flex items-center gap-0.5">
+                            <Check className="w-3.5 h-3.5" /> {s.totalCorrect || 0}
+                          </span>
+                          <span className="text-rose-600 font-bold flex items-center gap-0.5">
+                            <X className="w-3.5 h-3.5" /> {s.totalWrong || 0}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                          s.status === 'Disqualified'
+                            ? 'bg-red-50 text-red-600 border border-red-200'
+                            : s.status === 'Completed'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-blue-50 text-blue-700 border border-blue-200'
                         }`}>
-                          {s.strikes}/3
+                          {s.status}
                         </span>
-                        <button
-                          onClick={() => handleAdjustStrikes(s, s.strikes + 1)}
-                          disabled={s.strikes >= 3}
-                          className={`px-1.5 py-0.5 rounded text-[10px] border disabled:opacity-30 ${buttonSecCls}`}
-                          title="Add manual strike"
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleAdjustStrikes(s, s.strikes - 1)}
+                            disabled={s.strikes === 0}
+                            className={`px-1.5 py-0.5 rounded text-[10px] border disabled:opacity-30 ${buttonSecCls}`}
+                            title="Forgive strike"
+                          >
+                            -
+                          </button>
+                          <span className={`font-mono font-bold px-2 py-0.5 rounded text-xs ${
+                            s.strikes === 0 ? (isLight ? 'bg-slate-100 text-slate-600' : 'bg-slate-800 text-slate-400') :
+                            s.strikes >= 3 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {s.strikes}/3
+                          </span>
+                          <button
+                            onClick={() => handleAdjustStrikes(s, s.strikes + 1)}
+                            disabled={s.strikes >= 3}
+                            className={`px-1.5 py-0.5 rounded text-[10px] border disabled:opacity-30 ${buttonSecCls}`}
+                            title="Add manual strike"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button 
+                          onClick={() => { setInspectedStudent(s); setInspectTab('sections'); }}
+                          className={`px-3 py-1 text-xs font-medium rounded-lg border transition ${buttonSecCls}`}
                         >
-                          +
+                          Inspect Log
                         </button>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <button 
-                        onClick={() => { setInspectedStudent(s); setInspectTab('sections'); }}
-                        className={`px-3 py-1 text-xs font-medium rounded-lg border transition ${buttonSecCls}`}
-                      >
-                        Inspect Log
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                    </tr>
+                  );
+                })}
                 {participantsList.length === 0 && (
                   <tr>
                     <td colSpan={8} className="py-10 text-center text-slate-400 text-xs font-mono">

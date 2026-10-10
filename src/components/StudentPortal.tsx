@@ -5,7 +5,7 @@ import {
   ShieldAlert, CheckCircle, AlertTriangle, Maximize, Clock, Trophy, 
   AlertOctagon, Edit3, Award, Bookmark, Flag, ArrowRight, ArrowLeft, 
   RotateCcw, Check, Layers, Loader2, Menu, X, AlertCircle, HelpCircle, BarChart3, RefreshCw,
-  Printer, BellRing, Sparkles, ChevronDown
+  Printer, BellRing, Sparkles
 } from 'lucide-react';
 
 interface StudentPortalProps {
@@ -104,7 +104,7 @@ const getOrSetRandomizedQuestions = (quiz: Quiz, quizId: string): Question[] => 
   return questions;
 };
 
-// Reusable evaluation function for real-time live score computation
+// Pure evaluation function for calculating scores accurately
 const evaluateQuizAnswers = (quiz: Quiz, answers: Record<string, any>) => {
   let totalScore = 0;
   let totalCorrect = 0;
@@ -316,7 +316,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
   
   const [liveProctorWarning, setLiveProctorWarning] = useState<string | null>(null);
 
-  // 5-Second Stylish Thank You Screen States
+  // 5-Second Countdown and Thank You states
   const [showThankYou, setShowThankYou] = useState<boolean>(false);
   const [thankYouCountdown, setThankYouCountdown] = useState<number>(5);
 
@@ -486,7 +486,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     }
   };
 
-  // 5-Second Countdown trigger to stylish Thank You screen
+  // 5-Second Transition Countdown to Thank You Screen
   useEffect(() => {
     if (!isFinished || showThankYou) return;
 
@@ -504,7 +504,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     return () => clearInterval(timer);
   }, [isFinished, showThankYou]);
 
-  // Transmit live score updates to host in real-time
+  // Transmit live score updates to host dashboard in real-time
   const syncLiveProgress = (updatedAnswers: Record<string, any>) => {
     if (!quiz || !resolvedQuizId) return;
 
@@ -529,14 +529,14 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
       submittedAt: new Date().toLocaleTimeString()
     };
 
-    // 1. Instant Broadcast to Host
+    // Broadcast live score immediately to host
     broadcastMessage({
       type: 'PARTICIPANT_LIVE_UPDATE' as any,
       quizId: resolvedQuizId,
       participant: liveParticipant
     });
 
-    // 2. Local Storage Sync
+    // Write to shared local storage key
     try {
       const qKey = `quizguard_quiz_${resolvedQuizId}`;
       const qRaw = localStorage.getItem(qKey);
@@ -561,7 +561,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
       }
     } catch (e) {}
 
-    // 3. Supabase Live Sync (safe standard columns)
+    // Async safe update to Supabase
     if (supabase) {
       supabase.from('participants').upsert({
         id: participantId,
@@ -574,38 +574,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
         violations: violations,
         updated_at: new Date().toISOString()
       }).then(() => {});
-    }
-  };
-
-  const handleRetakeExam = () => {
-    if (!resolvedQuizId) return;
-    localStorage.removeItem(`quizguard_session_${resolvedQuizId}`);
-    localStorage.removeItem(`quizguard_answers_${resolvedQuizId}`);
-    localStorage.removeItem(`quizguard_review_${resolvedQuizId}`);
-    localStorage.removeItem(`quizguard_visited_${resolvedQuizId}`);
-    localStorage.removeItem(`quizguard_start_time_${resolvedQuizId}`);
-    localStorage.removeItem(`quizguard_pid_${resolvedQuizId}`);
-    localStorage.removeItem(`quizguard_current_idx_${resolvedQuizId}`);
-    localStorage.removeItem(`quizguard_student_q_${resolvedQuizId}`);
-
-    const newPid = 'p_' + Math.random().toString(36).substring(2, 9);
-    setParticipantId(newPid);
-    setAnswers({});
-    setReviewFlags({});
-    setVisitedIndices({ 0: true });
-    setCurrentIdx(0);
-    setIsFinished(false);
-    setShowThankYou(false);
-    setThankYouCountdown(5);
-    setIsJoined(false);
-    setStartedAtTimestamp(null);
-    setTotalSecondsLeft(totalDurationSec || 1200);
-    setScore(0);
-    hasAutoSubmitted.current = false;
-
-    if (quiz) {
-      const reshuffled = getOrSetRandomizedQuestions(quiz, resolvedQuizId);
-      setQuiz({ ...quiz, questions: reshuffled });
     }
   };
 
@@ -876,14 +844,14 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
       submittedAt: new Date().toLocaleTimeString()
     };
 
-    // 1. Instant Broadcast to Host
+    // Broadcast instant submission to Host Scoreboard
     broadcastMessage({
       type: 'PARTICIPANT_SUBMITTED' as any,
       quizId: resolvedQuizId,
       participant: studentResultObj
     });
 
-    // 2. Instant Local Storage Update
+    // Update Local Storage
     try {
       const qKey = `quizguard_quiz_${resolvedQuizId}`;
       const qRaw = localStorage.getItem(qKey);
@@ -908,7 +876,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
       }
     } catch (e) {}
 
-    // 3. Supabase Safe Upsert
+    // Update Supabase
     if (supabase && resolvedQuizId) {
       try {
         await supabase.from('participants').upsert({
@@ -985,7 +953,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     return (
       <div className={`max-w-md mx-auto my-12 p-8 border rounded-3xl text-center shadow-2xl ${cardCls}`}>
         <div className={`p-3 rounded-2xl w-fit mx-auto mb-4 border ${isLight ? 'bg-red-50 border-red-200' : 'bg-red-500/10 border-red-500/20'}`}>
-          <AlertOctagon className={`w-12 h-12 text-red-600` } />
+          <AlertOctagon className="w-12 h-12 text-red-600" />
         </div>
         <h2 className="text-2xl font-bold mb-2">Examination Concluded</h2>
         <p className={`text-xs mb-6 leading-relaxed ${textMuted}`}>
@@ -1015,12 +983,10 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     );
   }
 
-  // Stylish Thank You Celebration Card after 5 Seconds
+  // Stylish "THANK YOU" Screen without score, completion time, or retake exam button
   if (isFinished && showThankYou) {
-    const totalMax = quiz.questions.reduce((sum, q) => sum + (q.marks || 10), 0);
-
     return (
-      <div className="max-w-xl mx-auto my-12 p-8 sm:p-12 border rounded-3xl text-center shadow-2xl space-y-6 animate-fade-in relative overflow-hidden transition-colors"
+      <div className="max-w-xl mx-auto my-16 p-8 sm:p-14 border rounded-3xl text-center shadow-2xl space-y-6 animate-fade-in relative overflow-hidden transition-colors"
         style={{
           background: isLight 
             ? 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)' 
@@ -1028,51 +994,39 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
           borderColor: isLight ? '#cbd5e1' : '#1e293b'
         }}
       >
-        <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white shadow-lg shadow-emerald-500/30 animate-bounce">
+        <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white shadow-xl shadow-emerald-500/25 animate-bounce">
           <Sparkles className="w-10 h-10" />
         </div>
 
-        <div>
-          <span className="text-xs font-mono font-bold tracking-widest uppercase text-emerald-500 block mb-2">
-            Assessment Completed
+        <div className="space-y-3">
+          <span className="text-xs font-mono font-bold tracking-widest uppercase text-emerald-500 block">
+            Assessment Submitted
           </span>
-          <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 mb-2">
+          <h1 className="text-4xl sm:text-6xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400">
             THANK YOU!
           </h1>
-          <p className={`text-sm ${textMuted}`}>
-            Your answers have been securely evaluated and submitted to your institution.
+          <p className={`text-sm sm:text-base leading-relaxed ${textMuted} max-w-sm mx-auto`}>
+            Your responses have been successfully recorded and submitted to your institution.
           </p>
         </div>
 
-        <div className={`p-6 rounded-2xl border text-center space-y-2 ${subCardCls}`}>
-          <div className="flex justify-between items-center text-xs font-mono pb-2 border-b border-slate-700/40">
+        <div className={`p-5 rounded-2xl border text-center space-y-1.5 ${subCardCls}`}>
+          <div className="flex justify-between items-center text-xs font-mono">
             <span className={textMuted}>Candidate:</span>
-            <strong className={textPrimary}>{name}</strong>
-          </div>
-          <div className="flex justify-between items-center text-xs font-mono pb-2 border-b border-slate-700/40">
-            <span className={textMuted}>Total Evaluation Score:</span>
-            <strong className={`text-base ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>{score} / {totalMax} pts</strong>
+            <strong className={`font-bold ${textPrimary}`}>{name}</strong>
           </div>
           <div className="flex justify-between items-center text-xs font-mono">
-            <span className={textMuted}>Completion Time:</span>
-            <strong className={textPrimary}>{Math.floor(timeTaken / 60)}m {timeTaken % 60}s</strong>
+            <span className={textMuted}>Assessment:</span>
+            <strong className={`font-bold ${textPrimary}`}>{quiz.title}</strong>
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+        <div className="pt-2">
           <button
             onClick={() => setShowThankYou(false)}
-            className={`w-full py-3 rounded-xl text-xs font-bold border transition ${buttonSecCls}`}
+            className={`w-full py-3.5 rounded-xl text-xs font-bold border transition ${buttonSecCls}`}
           >
-            Review Detailed Answer Key
-          </button>
-          <button
-            onClick={handleRetakeExam}
-            className={`w-full py-3 text-white font-bold rounded-xl text-xs transition ${
-              isLight ? 'bg-blue-700 hover:bg-blue-800' : 'bg-cyan-600 hover:bg-cyan-500'
-            }`}
-          >
-            Retake Exam (Test Mode)
+            Review Question Answers & Explanations
           </button>
         </div>
       </div>
@@ -1086,7 +1040,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
 
     return (
       <div className="max-w-4xl mx-auto my-8 space-y-8 animate-fade-in print:my-0 print:space-y-4">
-        {/* 5-Second Progress Notice Bar */}
+        {/* 5-Second Transition Countdown Bar */}
         <div className="p-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl text-center text-xs font-bold font-mono flex items-center justify-center gap-2 shadow-md">
           <Sparkles className="w-4 h-4 animate-spin" />
           <span>Showing results... Transitioning to Thank You screen in {thankYouCountdown}s</span>
@@ -1382,7 +1336,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
             className={`px-4 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${
               activeSectionFilter === 'all'
                 ? (isLight ? 'bg-blue-700 text-white shadow-sm' : 'bg-cyan-600 text-white shadow-md')
-                : (isLight ? 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100' : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white')
+                : buttonSecCls
             }`}
           >
             All Sections ({quiz.questions.length}Q)
@@ -1402,7 +1356,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                 className={`px-4 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-2 ${
                   activeSectionFilter === sec.id || currentQ?.sectionId === sec.id
                     ? (isLight ? 'bg-blue-700 text-white shadow-sm' : 'bg-cyan-600 text-white shadow-md')
-                    : (isLight ? 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100' : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white')
+                    : buttonSecCls
                 }`}
               >
                 <span>{sec.name}</span>
@@ -1454,7 +1408,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
               <button
                 onClick={() => handleClearResponse(currentQ.id)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition ${
-                  isLight ? 'bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border-slate-200' : 'bg-slate-800 hover:bg-rose-950/40 border-slate-700 hover:border-rose-500/40 text-slate-400 hover:text-rose-300'
+                  isLight ? 'bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border-slate-200' : 'bg-slate-800 hover:bg-rose-950/40 text-slate-400 hover:text-rose-300 border-slate-700'
                 }`}
               >
                 <RotateCcw className="w-3.5 h-3.5" /> Clear Response
@@ -1622,9 +1576,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                           ? 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200' 
                           : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-500';
 
-                        if (status === 'answered') badgeColor = 'bg-emerald-600 text-white border-emerald-500 shadow-sm';
-                        else if (status === 'review') badgeColor = 'bg-purple-600 text-white border-purple-500 shadow-sm';
-                        else if (status === 'answered_review') badgeColor = 'bg-purple-600 text-white border-purple-500 ring-2 ring-emerald-400';
+                        if (status === 'answered') badgeColor = 'bg-emerald-600 text-white border-emerald-600 shadow-sm';
+                        else if (status === 'review') badgeColor = 'bg-purple-600 text-white border-purple-600 shadow-sm';
+                        else if (status === 'answered_review') badgeColor = 'bg-purple-600 text-white border-purple-600 ring-2 ring-emerald-400';
                         else if (status === 'skipped') badgeColor = 'bg-amber-600 text-white border-amber-500';
 
                         return (
@@ -1652,7 +1606,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
         </div>
       </div>
 
-      {/* Confirmation Pre-Submit Modal */}
       {showSubmitModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className={`max-w-lg w-full border p-6 sm:p-8 rounded-3xl space-y-6 shadow-2xl ${cardCls}`}>
@@ -1660,7 +1613,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
               <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-2 border ${
                 isLight ? 'bg-amber-50 border-amber-200' : 'bg-amber-500/10 border-amber-500/20'
               }`}>
-                <AlertCircle className={`w-6 h-6 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
+                <AlertCircle className="w-6 h-6 text-amber-600" />
               </div>
               <h3 className="text-xl font-bold">Confirm Examination Submission</h3>
               <p className={`text-xs ${textMuted}`}>
