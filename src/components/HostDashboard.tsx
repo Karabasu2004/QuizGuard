@@ -5,7 +5,7 @@ import { PieChart } from './PieChart';
 import { 
   Shield, Plus, Copy, Check, ExternalLink, LogOut, Trash2, Users, 
   Clock, Palette, CheckCircle2, Lock, Mail, User, RefreshCw, StopCircle, 
-  PlayCircle, Edit3, Award, Download, Layers, HelpCircle, AlertOctagon, Settings2, BarChart2
+  PlayCircle, Edit3, Award, Download, Layers, HelpCircle, AlertOctagon, Settings2, BarChart2, Trophy
 } from 'lucide-react';
 
 interface HostProps {
@@ -288,11 +288,9 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     setQExplanation('');
   };
 
-  // Resilient Launch Function with Auto-Appender
   const handleLaunchQuiz = async () => {
     let currentDrafts = [...draftQuestions];
 
-    // If host entered a question in the form but didn't click '+ Append Question', auto-append it
     if (qText.trim()) {
       const currentSection = sections.find((s) => s.id === selectedSectionId);
       const marksAssigned = quizMode === 'marks_challenge' 
@@ -361,13 +359,11 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
       participants: {},
     };
 
-    // 1. Save synchronously locally FIRST so UI never hangs
     localStorage.setItem(`quizguard_quiz_${newQuiz.id}`, JSON.stringify(newQuiz));
     const updated = [newQuiz, ...quizzes.filter(q => q.id !== newQuiz.id)];
     setQuizzes(updated);
     localStorage.setItem(`quizguard_host_quizzes_${hostEmail}`, JSON.stringify(updated));
 
-    // 2. Switch UI to Active Quiz immediately (instantly renders link and live telemetry)
     setActiveQuiz(newQuiz);
     onThemeChange(selectedTheme);
     applyGlobalTheme(selectedTheme);
@@ -379,7 +375,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     setBlankAnswers(['', '', '']);
     setQExplanation('');
 
-    // 3. Background async sync to Supabase without blocking UI
     try {
       await saveQuiz(newQuiz);
     } catch (err) {
@@ -646,7 +641,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                   placeholder="host@university.edu"
                   value={regEmail}
                   onChange={(e) => setRegEmail(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800/80 border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-500"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-500"
                 />
               </div>
 
@@ -660,7 +655,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                   placeholder="Create secure password"
                   value={regPassword}
                   onChange={(e) => setRegPassword(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800/80 border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-500"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-500"
                 />
               </div>
 
@@ -684,7 +679,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                   placeholder="Enter characters above"
                   value={regCaptcha}
                   onChange={(e) => setRegCaptcha(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800/80 border border-slate-700 text-white text-xs uppercase tracking-wider focus:outline-none focus:border-cyan-500"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs uppercase tracking-wider focus:outline-none focus:border-cyan-500"
                 />
               </div>
 
@@ -1406,7 +1401,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               <div>• Total Maximum Marks: <strong className="text-amber-400">{draftQuestions.reduce((sum, q) => sum + (q.marks || 10), 0)} pts</strong></div>
             </div>
 
-            {/* Always Active Launch Button (Provides Immediate Feedback) */}
             <button
               onClick={handleLaunchQuiz}
               type="button"
