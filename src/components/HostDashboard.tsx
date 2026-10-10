@@ -288,41 +288,103 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     setQExplanation('');
   };
 
+  // Resilient Launch Function with Auto-Appender
   const handleLaunchQuiz = async () => {
+    let currentDrafts = [...draftQuestions];
+
+    // If host entered a question in the form but didn't click '+ Append Question', auto-append it
+    if (qText.trim()) {
+      const currentSection = sections.find((s) => s.id === selectedSectionId);
+      const marksAssigned = quizMode === 'marks_challenge' 
+        ? (currentSection ? currentSection.marksPerQuestion : 3) 
+        : customClassicMarks;
+
+      if (qType === 'mcq' && optA.trim() && optB.trim() && optC.trim() && optD.trim()) {
+        currentDrafts.push({
+          id: `q_${Date.now()}`,
+          sectionId: quizMode === 'marks_challenge' ? selectedSectionId : undefined,
+          type: 'mcq',
+          text: qText.trim(),
+          options: [optA.trim(), optB.trim(), optC.trim(), optD.trim()],
+          correctAnswer: correctOpt,
+          marks: marksAssigned,
+          timeLimit: qTimerClassic,
+          explanation: qExplanation.trim(),
+        });
+      } else if (qType === 'fib' && singleFibAnswer.trim()) {
+        currentDrafts.push({
+          id: `q_${Date.now()}`,
+          sectionId: quizMode === 'marks_challenge' ? selectedSectionId : undefined,
+          type: 'fib',
+          text: qText.trim(),
+          correctAnswer: singleFibAnswer.trim(),
+          marks: marksAssigned,
+          timeLimit: qTimerClassic,
+          explanation: qExplanation.trim(),
+        });
+      } else if (qType === 'multi_fib' && blankAnswers.every(a => a.trim())) {
+        currentDrafts.push({
+          id: `q_${Date.now()}`,
+          sectionId: quizMode === 'marks_challenge' ? selectedSectionId : undefined,
+          type: 'multi_fib',
+          text: qText.trim(),
+          correctAnswer: blankAnswers.map(a => a.trim()),
+          marks: marksAssigned,
+          timeLimit: qTimerClassic,
+          explanation: qExplanation.trim(),
+        });
+      }
+    }
+
     if (!newTitle.trim()) {
-      alert('Please enter an assessment title.');
+      alert('Please enter an Assessment Title under "Assessment Launch Config" before launching.');
       return;
     }
-    if (draftQuestions.length === 0) {
-      alert('Please add at least 1 question.');
+
+    if (currentDrafts.length === 0) {
+      alert('Please add at least 1 question. Fill out the question builder and click "+ Append Question to Assessment".');
       return;
     }
 
     const newQuiz: Quiz = {
       id: `quiz_${Date.now().toString(36)}`,
       hostEmail,
-      title: newTitle,
+      title: newTitle.trim(),
       createdAt: new Date().toLocaleString(),
       mode: quizMode,
       totalDurationMinutes: quizMode === 'marks_challenge' ? totalDurationMin : undefined,
       sections: quizMode === 'marks_challenge' ? sections : undefined,
       pacingMode,
       theme: selectedTheme,
-      questions: draftQuestions,
+      questions: currentDrafts,
       status: 'live',
       participants: {},
     };
 
-    await saveQuiz(newQuiz);
-    const updated = [newQuiz, ...quizzes];
+    // 1. Save synchronously locally FIRST so UI never hangs
+    localStorage.setItem(`quizguard_quiz_${newQuiz.id}`, JSON.stringify(newQuiz));
+    const updated = [newQuiz, ...quizzes.filter(q => q.id !== newQuiz.id)];
     setQuizzes(updated);
     localStorage.setItem(`quizguard_host_quizzes_${hostEmail}`, JSON.stringify(updated));
 
+    // 2. Switch UI to Active Quiz immediately (instantly renders link and live telemetry)
     setActiveQuiz(newQuiz);
     onThemeChange(selectedTheme);
     applyGlobalTheme(selectedTheme);
     setDraftQuestions([]);
     setNewTitle('');
+    setQText('');
+    setOptA(''); setOptB(''); setOptC(''); setOptD('');
+    setSingleFibAnswer('');
+    setBlankAnswers(['', '', '']);
+    setQExplanation('');
+
+    // 3. Background async sync to Supabase without blocking UI
+    try {
+      await saveQuiz(newQuiz);
+    } catch (err) {
+      console.warn('Background sync note:', err);
+    }
   };
 
   const handleThemeSwitch = (theme: ThemeColor) => {
@@ -414,7 +476,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     }
   };
 
-  // Stage 5 Enhanced CSV Export (Includes Section Scores, Accurate Rank, and Time Taken)
   const exportResultsCSV = () => {
     if (!activeQuiz) return;
     const participants = Object.values(activeQuiz.participants || {});
@@ -641,7 +702,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   }
 
   if (activeQuiz) {
-    // Stage 5 Hardened Tie-Breaking Sort (Score DESC, then Time Taken ASC)
     const participantsList = Object.values(activeQuiz.participants || {}).sort((a, b) => {
       const aDisq = a.status === 'Disqualified';
       const bDisq = b.status === 'Disqualified';
@@ -752,6 +812,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           </div>
         </div>
 
+        {/* Candidate Invitation Link Banner */}
         <div className="bg-slate-900/80 border border-cyan-500/30 p-6 rounded-3xl shadow-xl space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs font-mono uppercase tracking-widest text-cyan-400 font-bold">
@@ -789,7 +850,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           <PieChart title="Score Distribution Brackets" data={scoreChartData} />
         </div>
 
-        {/* Stage 5 Tie-Breaking Leaderboard */}
+        {/* Live Examination Leaderboard */}
         <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-4">
           <div className="flex justify-between items-center">
             <h3 className="text-lg font-bold text-white flex items-center gap-2">
@@ -874,7 +935,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           </div>
         </div>
 
-        {/* Stage 5 Enhanced Inspect Candidate Modal */}
         {inspectedStudent && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-6">
             <div className="max-w-xl w-full bg-slate-900 border border-slate-800 p-6 rounded-3xl space-y-4 shadow-2xl">
@@ -888,7 +948,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                 <button onClick={() => setInspectedStudent(null)} className="text-slate-400 hover:text-white text-xs">? Close</button>
               </div>
 
-              {/* Inspect Modal Tabs */}
               <div className="flex gap-2 border-b border-slate-800 pb-2 text-xs">
                 <button
                   onClick={() => setInspectTab('sections')}
@@ -1347,10 +1406,11 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               <div>• Total Maximum Marks: <strong className="text-amber-400">{draftQuestions.reduce((sum, q) => sum + (q.marks || 10), 0)} pts</strong></div>
             </div>
 
+            {/* Always Active Launch Button (Provides Immediate Feedback) */}
             <button
               onClick={handleLaunchQuiz}
-              disabled={draftQuestions.length === 0 || !newTitle.trim()}
-              className="w-full py-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl text-sm shadow-lg shadow-emerald-600/20 transition"
+              type="button"
+              className="w-full py-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white font-bold rounded-xl text-sm shadow-lg shadow-emerald-600/20 transition cursor-pointer"
             >
               Launch Assessment & Generate Link
             </button>
