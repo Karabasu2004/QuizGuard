@@ -1,14 +1,11 @@
 ﻿import { createClient } from '@supabase/supabase-js';
 import { Quiz, ThemeColor } from './types';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const supabaseUrl = 'https://xpmmjwltjwaoadncomjs.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhwbW1qd2x0andhb2FkbmNvbWpzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA3NzcxNTQsImV4cCI6MjEwNjM1MzE1NH0.MdaTeVN0nwqUZIel6SjBRL-cSaxH7xT2fIpBeuaNkts';
 
-export const supabase = (supabaseUrl && supabaseAnonKey) 
-  ? createClient(supabaseUrl, supabaseAnonKey)
-  : null;
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-// Multi-tab BroadcastChannel ensures 0ms cross-tab delivery on the same device
 const localBus = typeof window !== 'undefined' && 'BroadcastChannel' in window 
   ? new BroadcastChannel('quizguard_realtime_bus') 
   : null;
@@ -58,18 +55,28 @@ export const subscribeToMessages = (callback: (payload: any) => void) => {
 
 export const saveQuiz = async (quiz: Quiz) => {
   localStorage.setItem(`quizguard_quiz_${quiz.id}`, JSON.stringify(quiz));
+
   if (supabase) {
     try {
-      await supabase.from('quizzes').upsert({
+      const { error } = await supabase.from('quizzes').upsert({
         id: quiz.id,
+        host_email: quiz.hostEmail || '',
         title: quiz.title,
         questions: quiz.questions,
-        theme: quiz.theme,
-        pacing_mode: quiz.pacingMode,
-        status: quiz.status,
+        theme: quiz.theme || 'slate',
+        pacing_mode: quiz.pacingMode || 'manual',
+        status: quiz.status || 'live',
         updated_at: new Date().toISOString()
       });
-    } catch (e) {}
+
+      if (error) {
+        console.error('Supabase saveQuiz rejected:', error.message);
+      } else {
+        console.log('Quiz successfully stored in Supabase cloud:', quiz.id);
+      }
+    } catch (e) {
+      console.error('saveQuiz exception:', e);
+    }
   }
 };
 
@@ -78,23 +85,40 @@ export const getSavedQuiz = async (id: string): Promise<Quiz | null> => {
   if (local) {
     try { return JSON.parse(local); } catch (e) {}
   }
+
   if (supabase) {
     try {
-      const { data } = await supabase.from('quizzes').select('*').eq('id', id).maybeSingle();
+      const { data, error } = await supabase.from('quizzes').select('*').eq('id', id).maybeSingle();
+      if (error) {
+        console.error('Supabase cloud fetch error:', error.message);
+        return null;
+      }
       if (data) {
         return {
           id: data.id,
-          hostEmail: '',
+          hostEmail: data.host_email || '',
           title: data.title,
-          createdAt: data.created_at || '',
+          createdAt: data.created_at || new Date().toLocaleString(),
+          mode: 'marks_challenge',
+          totalDurationMinutes: 20,
+          sections: [
+            { id: 'sec_3m', name: 'Section A (3M)', marksPerQuestion: 3, negativeMarkingEnabled: true, negativeMarking: 1 },
+            { id: 'sec_5m', name: 'Section B (5M)', marksPerQuestion: 5, negativeMarkingEnabled: true, negativeMarking: 1 },
+            { id: 'sec_7m', name: 'Section C (7M)', marksPerQuestion: 7, negativeMarkingEnabled: true, negativeMarking: 2 },
+            { id: 'sec_10m', name: 'Section D (10M)', marksPerQuestion: 10, negativeMarkingEnabled: true, negativeMarking: 2 },
+          ],
+          shuffleQuestions: true,
+          shuffleOptions: true,
           pacingMode: data.pacing_mode || 'manual',
           theme: data.theme || 'slate',
-          questions: data.questions || [],
+          questions: Array.isArray(data.questions) ? data.questions : [],
           status: data.status || 'live',
           participants: {}
         };
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error('getSavedQuiz exception:', e);
+    }
   }
   return null;
 };
