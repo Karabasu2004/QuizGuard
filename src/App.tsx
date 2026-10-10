@@ -51,6 +51,14 @@ export default function App() {
         isLight ? 'bg-slate-50 text-slate-900' : 'bg-slate-950 text-slate-100'
       }`}
     >
+      {/* 1. ACCESSIBILITY: Skip to main content link for keyboard users (WCAG 2.4.1) */}
+      <a 
+        href="#main-content" 
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:px-4 focus:py-2 focus:bg-cyan-500 focus:text-slate-950 focus:font-bold focus:rounded-lg focus:shadow-xl focus:outline-none"
+      >
+        Skip to main content
+      </a>
+
       <header className={`border-b sticky top-0 z-40 transition-colors ${
         isLight ? 'bg-white/95 border-slate-200 backdrop-blur-md' : 'bg-slate-900/90 border-slate-800 backdrop-blur-md'
       }`}>
@@ -76,7 +84,8 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          {/* 2. ACCESSIBILITY: Wrapped in semantic <nav> landmark */}
+          <nav aria-label="Main Navigation" className="flex items-center gap-3">
             {/* Independent Theme Toggle Button for this device */}
             <button
               onClick={toggleLightDark}
@@ -101,11 +110,12 @@ export default function App() {
                 Back
               </button>
             )}
-          </div>
+          </nav>
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8">
+      {/* 3. ACCESSIBILITY: Target id="main-content" and tabIndex for screen readers */}
+      <main id="main-content" tabIndex={-1} className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 outline-none">
         {role === 'landing' && (
           <div className="py-12 sm:py-20 space-y-10 text-center max-w-2xl mx-auto">
             <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-semibold ${
