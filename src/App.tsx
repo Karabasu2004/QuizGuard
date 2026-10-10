@@ -6,13 +6,23 @@ import { subscribeToMessages, applyGlobalTheme, getSavedQuiz } from './supabase'
 import { Shield, MonitorCheck, ArrowRight } from 'lucide-react';
 
 export default function App() {
-  const [role, setRole] = useState<'landing' | 'host' | 'student'>('landing');
-  const [quizIdFromUrl, setQuizIdFromUrl] = useState<string | null>(null);
+  const [role, setRole] = useState<'landing' | 'host' | 'student'>(() => {
+    const rawSearch = window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '');
+    const params = new URLSearchParams(rawSearch);
+    return (params.get('quiz') || params.get('quizId')) ? 'student' : 'landing';
+  });
+
+  const [quizIdFromUrl, setQuizIdFromUrl] = useState<string | null>(() => {
+    const rawSearch = window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '');
+    const params = new URLSearchParams(rawSearch);
+    return params.get('quiz') || params.get('quizId') || null;
+  });
+
   const [activeTheme, setActiveTheme] = useState<ThemeColor>('slate');
 
-  // Detect ?quiz=... or ?quizId=... in URL
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const rawSearch = window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '');
+    const params = new URLSearchParams(rawSearch);
     const quizId = params.get('quiz') || params.get('quizId');
     if (quizId) {
       setQuizIdFromUrl(quizId);
@@ -28,7 +38,6 @@ export default function App() {
     }
   }, []);
 
-  // Listen to Host Theme Broadcasts
   useEffect(() => {
     const unsubscribe = subscribeToMessages((msg) => {
       if (msg.type === 'THEME_CHANGE' && msg.theme) {

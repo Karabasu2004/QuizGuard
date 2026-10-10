@@ -4,8 +4,7 @@ import { getSavedQuiz, applyGlobalTheme, subscribeToMessages, supabase } from '.
 import { 
   ShieldAlert, CheckCircle, AlertTriangle, Maximize, Clock, Trophy, 
   AlertOctagon, Edit3, Award, Bookmark, Flag, ArrowRight, ArrowLeft, 
-  RotateCcw, Check, Layers, Loader2, Menu, X, CheckCircle2, AlertCircle,
-  HelpCircle, Target, BarChart3, Filter
+  RotateCcw, Check, Layers, Loader2, Menu, X, AlertCircle, HelpCircle, BarChart3, RefreshCw
 } from 'lucide-react';
 
 interface StudentPortalProps {
@@ -23,7 +22,7 @@ interface StoredExamSession {
 
 export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId, quizIdFromUrl, onExit }) => {
   const [resolvedQuizId, setResolvedQuizId] = useState<string>(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : ''));
     return params.get('quiz') || params.get('quizId') || quizIdFromUrl || propQuizId || '';
   });
 
@@ -67,7 +66,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     return !!initialSession?.startedAt;
   });
 
-  const [participantId] = useState<string>(() => {
+  const [participantId, setParticipantId] = useState<string>(() => {
     if (initialSession?.participantId) return initialSession.participantId;
     const saved = resolvedQuizId ? localStorage.getItem(`quizguard_pid_${resolvedQuizId}`) : null;
     return saved || ('p_' + Math.random().toString(36).substring(2, 9));
@@ -143,13 +142,12 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
   const [timeTaken, setTimeTaken] = useState<number>(0);
   const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
 
-  // Stage 5 Result Breakdown States
   const [sectionSummaries, setSectionSummaries] = useState<Record<string, SectionSummary>>({});
   const [questionDetails, setQuestionDetails] = useState<Record<string, QuestionScoreDetail>>({});
   const [overallStats, setOverallStats] = useState<{ correct: number; wrong: number; skipped: number }>({ correct: 0, wrong: 0, skipped: 0 });
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    const params = new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : ''));
     const targetId = params.get('quiz') || params.get('quizId') || quizIdFromUrl || propQuizId || '';
     if (targetId && targetId !== resolvedQuizId) {
       setResolvedQuizId(targetId);
@@ -164,67 +162,121 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     loadQuiz(resolvedQuizId);
   }, [resolvedQuizId]);
 
+  // Robust Quiz Loader with Local Multi-Cache Fallback
   const loadQuiz = async (id: string) => {
     setLoadingQuiz(true);
-    
-    if (localStorage.getItem(`quizguard_disqualified_${id}`) === 'true') {
-      setDisqualified(true);
-      setIsFinished(true);
-      setIsJoined(true);
-      setStrikes(3);
-    }
-
-    const loaded = await getSavedQuiz(id);
-    if (loaded) {
-      setQuiz(loaded);
-      if (loaded.theme) applyGlobalTheme(loaded.theme);
-      if (loaded.pacingMode === 'ended' || (loaded as any).status === 'ended') {
-        setIsAssessmentStopped(true);
-      } else {
-        setIsAssessmentStopped(false);
+    try {
+      if (localStorage.getItem(`quizguard_disqualified_${id}`) === 'true') {
+        setDisqualified(true);
+        setIsFinished(true);
+        setIsJoined(true);
+        setStrikes(3);
       }
 
-      const quizDurationSec = (loaded.mode === 'marks_challenge' 
-        ? (loaded.totalDurationMinutes || 20) 
-        : (loaded.questions?.length || 20) * 1) * 60;
-
-      setTotalDurationSec(quizDurationSec);
-
-      const currentSession = getStoredSession();
-      if (currentSession) {
-        currentSession.totalDurationSeconds = quizDurationSec;
-        localStorage.setItem(`quizguard_session_${id}`, JSON.stringify(currentSession));
+      // 1. Try local cache
+      let loaded: Quiz | null = null;
+      const direct = localStorage.getItem(`quizguard_quiz_${id}`);
+      if (direct) {
+        try { loaded = JSON.parse(direct); } catch (e) {}
       }
-    }
 
-    if (supabase && participantId) {
-      try {
-        const { data: pData } = await supabase
-          .from('participants')
-          .select('*')
-          .eq('id', participantId)
-          .maybeSingle();
-
-        if (pData) {
-          if (pData.status === 'Disqualified') {
-            setDisqualified(true);
-            setIsFinished(true);
-            setIsJoined(true);
-            setStrikes(pData.strikes || 3);
-            localStorage.setItem(`quizguard_disqualified_${id}`, 'true');
-          } else if (pData.status === 'Completed') {
-            setIsFinished(true);
-            setIsJoined(true);
-            setScore(pData.score || 0);
-            setTimeTaken(pData.time_taken || 0);
-            if (pData.section_summaries) setSectionSummaries(pData.section_summaries);
-            if (pData.question_details) setQuestionDetails(pData.question_details);
+      // 2. Scan host quizzes cache
+      if (!loaded) {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('quizguard_host_quizzes_')) {
+            try {
+              const list: Quiz[] = JSON.parse(localStorage.getItem(key) || '[]');
+              const found = list.find((q) => q.id === id);
+              if (found) { loaded = found; break; }
+            } catch (e) {}
           }
         }
-      } catch (e) {}
-    }
+      }
 
-    setLoadingQuiz(false);
+      // 3. Query Supabase
+      if (!loaded) {
+        loaded = await getSavedQuiz(id);
+      }
+
+      if (loaded) {
+        setQuiz(loaded);
+        if (loaded.theme) applyGlobalTheme(loaded.theme);
+        if (loaded.pacingMode === 'ended' || (loaded as any).status === 'ended') {
+          setIsAssessmentStopped(true);
+        } else {
+          setIsAssessmentStopped(false);
+        }
+
+        const quizDurationSec = (loaded.mode === 'marks_challenge' 
+          ? (loaded.totalDurationMinutes || 20) 
+          : (loaded.questions?.length || 20) * 1) * 60;
+
+        setTotalDurationSec(quizDurationSec);
+
+        const currentSession = getStoredSession();
+        if (currentSession) {
+          currentSession.totalDurationSeconds = quizDurationSec;
+          localStorage.setItem(`quizguard_session_${id}`, JSON.stringify(currentSession));
+        }
+      }
+
+      // Sync Supabase participant state
+      if (supabase && participantId) {
+        try {
+          const { data: pData } = await supabase
+            .from('participants')
+            .select('*')
+            .eq('id', participantId)
+            .maybeSingle();
+
+          if (pData) {
+            if (pData.status === 'Disqualified') {
+              setDisqualified(true);
+              setIsFinished(true);
+              setIsJoined(true);
+              setStrikes(pData.strikes || 3);
+            } else if (pData.status === 'Completed') {
+              setIsFinished(true);
+              setIsJoined(true);
+              setScore(pData.score || 0);
+              setTimeTaken(pData.time_taken || 0);
+              if (pData.section_summaries) setSectionSummaries(pData.section_summaries);
+              if (pData.question_details) setQuestionDetails(pData.question_details);
+            }
+          }
+        } catch (e) {}
+      }
+    } catch (err) {
+      console.error('Error loading quiz:', err);
+    } finally {
+      setLoadingQuiz(false);
+    }
+  };
+
+  // Reset / Retake handler for local developer testing
+  const handleRetakeExam = () => {
+    if (!resolvedQuizId) return;
+    localStorage.removeItem(`quizguard_session_${resolvedQuizId}`);
+    localStorage.removeItem(`quizguard_answers_${resolvedQuizId}`);
+    localStorage.removeItem(`quizguard_review_${resolvedQuizId}`);
+    localStorage.removeItem(`quizguard_visited_${resolvedQuizId}`);
+    localStorage.removeItem(`quizguard_start_time_${resolvedQuizId}`);
+    localStorage.removeItem(`quizguard_pid_${resolvedQuizId}`);
+    localStorage.removeItem(`quizguard_current_idx_${resolvedQuizId}`);
+
+    const newPid = 'p_' + Math.random().toString(36).substring(2, 9);
+    setParticipantId(newPid);
+    setAnswers({});
+    setReviewFlags({});
+    setVisitedIndices({ 0: true });
+    setCurrentIdx(0);
+    setIsFinished(false);
+    setIsJoined(false);
+    setStartedAtTimestamp(null);
+    setTotalSecondsLeft(totalDurationSec || 1200);
+    setScore(0);
+    hasAutoSubmitted.current = false;
   };
 
   useEffect(() => {
@@ -321,7 +373,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
     computeTime();
     const interval = setInterval(computeTime, 1000);
-
     return () => clearInterval(interval);
   }, [isJoined, isFinished, disqualified, isAssessmentStopped, startedAtTimestamp, totalDurationSec]);
 
@@ -431,7 +482,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     }
   };
 
-  // Stage 5 Evaluation Engine & Section Score Breakdown
   const handleSubmit = async (forced = false) => {
     if (!quiz || isAssessmentStopped) return;
     setShowSubmitModal(false);
@@ -445,7 +495,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     const calculatedSummaries: Record<string, SectionSummary> = {};
     const calculatedDetails: Record<string, QuestionScoreDetail> = {};
 
-    // Initialize section summaries
     (quiz.sections || []).forEach((sec) => {
       calculatedSummaries[sec.id] = {
         sectionId: sec.id,
@@ -534,7 +583,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
           if (secSummary) secSummary.skipped++;
         }
       } else {
-        // MCQ
         if (userAns !== undefined && userAns !== null) {
           if (Number(userAns) === Number(q.correctAnswer)) {
             qEarned = qMarks;
@@ -646,11 +694,20 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
       <div className="max-w-md mx-auto my-12 p-8 bg-slate-900 border border-slate-800 rounded-2xl text-center shadow-xl">
         <AlertTriangle className="w-16 h-16 text-amber-500 mx-auto mb-4" />
         <h2 className="text-2xl font-bold text-white mb-2">Assessment Not Found</h2>
+        <p className="text-slate-400 mb-6 text-xs">
+          The requested assessment ID is not accessible. Verify the link from the host dashboard.
+        </p>
+        <button
+          onClick={() => window.location.href = window.location.origin + window.location.pathname}
+          className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition"
+        >
+          Return to Home
+        </button>
       </div>
     );
   }
 
-  // Stage 5 Comprehensive Scorecard, Section Breakdown & Filterable Answer Review
+  // Finished & Results View
   if (isFinished) {
     const totalMax = quiz.questions.reduce((sum, q) => sum + (q.marks || 10), 0);
     const percentage = totalMax > 0 ? ((score / totalMax) * 100).toFixed(1) : '0';
@@ -666,7 +723,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
     return (
       <div className="max-w-4xl mx-auto my-8 space-y-8 animate-fade-in">
-        {/* Top Score Banner */}
         <div className="p-8 bg-slate-900 border border-slate-800 rounded-3xl text-center shadow-2xl space-y-6">
           <div className="inline-block p-4 bg-amber-500/10 rounded-3xl border border-amber-500/20">
             <Trophy className="w-14 h-14 text-amber-400" />
@@ -698,9 +754,19 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
               <span className="text-xs text-slate-500 block">/ {overallStats.skipped} skipped</span>
             </div>
           </div>
+
+          {/* Developer / Host Testing Reset Button */}
+          <div className="pt-2">
+            <button
+              onClick={handleRetakeExam}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded-xl text-xs font-semibold border border-slate-700 transition"
+              title="Clear this attempt and retest from question 1"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Retake Assessment (Test Mode)
+            </button>
+          </div>
         </div>
 
-        {/* Sectional Performance Grid */}
         {Object.keys(sectionSummaries).length > 0 && (
           <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-4 shadow-xl">
             <h3 className="text-base font-bold text-white flex items-center gap-2">
@@ -733,14 +799,12 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
           </div>
         )}
 
-        {/* Detailed Question-by-Question Review with Explanations */}
         <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-5 shadow-xl">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
             <h3 className="text-base font-bold text-white flex items-center gap-2">
               <CheckCircle className="w-5 h-5 text-emerald-400" /> Question-by-Question Answer Review
             </h3>
 
-            {/* Filter Pills */}
             <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
               <button
                 onClick={() => setReviewFilter('all')}
@@ -820,7 +884,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
                   <p className="text-white text-sm font-semibold leading-relaxed">{q.text}</p>
 
-                  {/* Multi-blank detailed per-blank breakdown */}
                   {q.type === 'multi_fib' && Array.isArray(q.correctAnswer) ? (
                     <div className="space-y-2 pt-1 font-mono">
                       <span className="text-slate-400 text-[11px] block font-bold">Multi-Blank Evaluation:</span>
@@ -876,6 +939,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     );
   }
 
+  // Join Screen
   if (!isJoined) {
     return (
       <div className="max-w-md mx-auto my-8 p-6 sm:p-8 bg-slate-900 border border-slate-800 rounded-3xl shadow-xl">
@@ -918,9 +982,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     );
   }
 
-  const currentQ = quiz.questions[currentIdx];
+  const currentQ = quiz.questions[currentIdx] || quiz.questions[0];
   const sectionMap = new Map((quiz.sections || []).map((s) => [s.id, s]));
-  const currentSec = currentQ.sectionId ? sectionMap.get(currentQ.sectionId) : undefined;
+  const currentSec = currentQ?.sectionId ? sectionMap.get(currentQ.sectionId) : undefined;
 
   const isQuestionAnswered = (q: Question) => {
     const val = answers[q.id];
@@ -1056,7 +1120,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
                   if (firstIdx !== -1) navigateTo(firstIdx);
                 }}
                 className={`px-4 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-2 ${
-                  activeSectionFilter === sec.id || currentQ.sectionId === sec.id
+                  activeSectionFilter === sec.id || currentQ?.sectionId === sec.id
                     ? 'bg-cyan-600 text-white shadow-md'
                     : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
                 }`}
@@ -1085,7 +1149,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
                   </span>
                 )}
                 <span className="text-[11px] px-2.5 py-0.5 rounded-full font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                  +{currentQ.marks || 10} Marks
+                  +{currentQ?.marks || 10} Marks
                 </span>
                 {currentSec && currentSec.negativeMarkingEnabled && currentSec.negativeMarking > 0 && (
                   <span className="text-[10px] px-2 py-0.5 rounded font-mono text-rose-400 bg-rose-950/40 border border-rose-900/40">
@@ -1102,17 +1166,17 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
               </button>
             </div>
 
-            <h2 className="text-lg font-semibold text-white leading-relaxed">{currentQ.text}</h2>
+            <h2 className="text-lg font-semibold text-white leading-relaxed">{currentQ?.text}</h2>
 
-            {currentQ.type === 'multi_fib' ? (
+            {currentQ?.type === 'multi_fib' ? (
               <div className="space-y-4 bg-slate-950 p-5 rounded-2xl border border-slate-800">
                 <div className="flex justify-between items-center text-xs">
                   <span className="font-medium text-slate-400">Fill all blanks (Partial marks awarded per blank):</span>
                   <span className="font-mono text-cyan-400">
-                    +{((currentQ.marks || 10) / (Array.isArray(currentQ.correctAnswer) ? currentQ.correctAnswer.length : 1)).toFixed(2)} pts/blank
+                    +{((currentQ?.marks || 10) / (Array.isArray(currentQ?.correctAnswer) ? currentQ.correctAnswer.length : 1)).toFixed(2)} pts/blank
                   </span>
                 </div>
-                {(Array.isArray(currentQ.correctAnswer) ? currentQ.correctAnswer : ['', '']).map((_, bIdx) => (
+                {(Array.isArray(currentQ?.correctAnswer) ? currentQ.correctAnswer : ['', '']).map((_, bIdx) => (
                   <div key={bIdx} className="space-y-1">
                     <label className="text-xs text-cyan-400 font-mono font-bold flex items-center gap-1">
                       <span className="w-4 h-4 rounded-full bg-cyan-900/60 flex items-center justify-center text-[10px] text-cyan-300 border border-cyan-700">
@@ -1131,7 +1195,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
                   </div>
                 ))}
               </div>
-            ) : currentQ.type === 'fib' ? (
+            ) : currentQ?.type === 'fib' ? (
               <div className="space-y-2 bg-slate-950 p-5 rounded-2xl border border-slate-800">
                 <label className="text-xs font-medium text-slate-400 block">Your Answer:</label>
                 <input
@@ -1145,7 +1209,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
               </div>
             ) : (
               <div className="space-y-3">
-                {(currentQ.options || []).map((opt, oIdx) => {
+                {(currentQ?.options || []).map((opt, oIdx) => {
                   const isSelected = answers[currentQ.id] === oIdx;
                   return (
                     <button
@@ -1273,7 +1337,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
         </div>
       </div>
 
-      {/* Confirmation Modal */}
       {showSubmitModal && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="max-w-lg w-full bg-slate-900 border border-slate-800 p-6 sm:p-8 rounded-3xl space-y-6 shadow-2xl animate-fade-in">
