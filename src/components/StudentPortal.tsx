@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Quiz, Question, QuizSection, ThemeColor, SectionSummary, QuestionScoreDetail } from '../types';
-import { getSavedQuiz, applyGlobalTheme, subscribeToMessages, supabase } from '../supabase';
+﻿import React, { useState, useEffect, useRef } from 'react';
+import { Quiz, Question, QuizSection, ThemeColor, SectionSummary, QuestionScoreDetail, StudentResult } from '../types';
+import { getSavedQuiz, applyGlobalTheme, subscribeToMessages, supabase, broadcastMessage } from '../supabase';
 import { 
   ShieldAlert, CheckCircle, AlertTriangle, Maximize, Clock, Trophy, 
   AlertOctagon, Edit3, Award, Bookmark, Flag, ArrowRight, ArrowLeft, 
-  RotateCcw, Check, Layers, Loader2, Menu, X, AlertCircle, HelpCircle, BarChart3, RefreshCw
+  RotateCcw, Check, Layers, Loader2, Menu, X, AlertCircle, HelpCircle, BarChart3, RefreshCw,
+  Printer, BellRing
 } from 'lucide-react';
 
 interface StudentPortalProps {
@@ -171,6 +172,8 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
   const [activeSectionFilter, setActiveSectionFilter] = useState<string>('all');
   const [reviewFilter, setReviewFilter] = useState<'all' | 'correct' | 'wrong' | 'skipped'>('all');
   
+  const [liveProctorWarning, setLiveProctorWarning] = useState<string | null>(null);
+
   const [answers, setAnswers] = useState<Record<string, any>>(() => {
     if (!resolvedQuizId) return {};
     try {
@@ -377,9 +380,23 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
       if (msg.type === 'RESUME_QUIZ' && msg.quizId === resolvedQuizId) {
         setIsAssessmentStopped(false);
       }
+      if (msg.type === 'PROCTOR_WARNING' && msg.quizId === resolvedQuizId && (msg.targetParticipantId === participantId || !msg.targetParticipantId)) {
+        setLiveProctorWarning(msg.message || 'Direct Notice from Proctor: Maintain assessment focus.');
+      }
+      if (msg.type === 'PROCTOR_STRIKE_ADJUST' && msg.quizId === resolvedQuizId && msg.targetParticipantId === participantId) {
+        if (typeof msg.newStrikes === 'number') {
+          setStrikes(msg.newStrikes);
+          if (msg.newStrikes >= 3) {
+            setDisqualified(true);
+            setIsFinished(true);
+          } else {
+            setDisqualified(false);
+          }
+        }
+      }
     });
     return () => unsubscribe();
-  }, [resolvedQuizId]);
+  }, [resolvedQuizId, participantId]);
 
   useEffect(() => {
     if (!isJoined || isFinished || disqualified || isAssessmentStopped) return;
@@ -428,16 +445,27 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     }
 
     if (supabase && resolvedQuizId) {
-      await supabase.from('participants').upsert({
-        id: participantId,
-        quiz_id: resolvedQuizId,
-        name: name,
-        strikes: newStrikes,
-        status: isDisq ? 'Disqualified' : 'Active',
-        violations: updatedViolations,
-        updated_at: new Date().toISOString()
-      });
+      try {
+        await supabase.from('participants').upsert({
+          id: participantId,
+          quiz_id: resolvedQuizId,
+          name: name,
+          strikes: newStrikes,
+          status: isDisq ? 'Disqualified' : 'Active',
+          violations: updatedViolations,
+          updated_at: new Date().toISOString()
+        });
+      } catch (e) {}
     }
+
+    broadcastMessage({
+      type: 'PARTICIPANT_INCIDENT' as any,
+      quizId: resolvedQuizId,
+      participantId,
+      name,
+      reason,
+      strikes: newStrikes
+    });
   };
 
   useEffect(() => {
@@ -499,16 +527,18 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     setIsJoined(true);
 
     if (supabase && resolvedQuizId) {
-      await supabase.from('participants').upsert({
-        id: participantId,
-        quiz_id: resolvedQuizId,
-        name: name,
-        score: 0,
-        strikes: 0,
-        status: 'Active',
-        violations: [],
-        updated_at: new Date().toISOString()
-      });
+      try {
+        await supabase.from('participants').upsert({
+          id: participantId,
+          quiz_id: resolvedQuizId,
+          name: name,
+          score: 0,
+          strikes: 0,
+          status: 'Active',
+          violations: [],
+          updated_at: new Date().toISOString()
+        });
+      } catch (e) {}
     }
   };
 
@@ -569,6 +599,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     }
   };
 
+  // Fixed Evaluation & Submission Handler
   const handleSubmit = async (forced = false) => {
     if (!quiz || isAssessmentStopped) return;
     setShowSubmitModal(false);
@@ -711,33 +742,119 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     setIsFinished(true);
     setIsAutoSubmitting(false);
 
+    // Embed evaluation inside answers object to guarantee schema compatibility
+    const enrichedAnswers = {
+      ...answers,
+      __evaluation: {
+        totalCorrect: totalCorrectCount,
+        totalWrong: totalWrongCount,
+        totalSkipped: totalSkippedCount,
+        sectionSummaries: calculatedSummaries,
+        questionDetails: calculatedDetails,
+        reviewFlags: reviewFlags
+      }
+    };
+
+    const studentResultObj: StudentResult = {
+      id: participantId,
+      name: name,
+      score: finalScore,
+      timeTakenSeconds: timeTaken,
+      strikes: strikes,
+      status: disqualified ? 'Disqualified' : 'Completed',
+      violations: violations,
+      answers: enrichedAnswers,
+      reviewFlags: reviewFlags,
+      sectionSummaries: calculatedSummaries,
+      questionDetails: calculatedDetails,
+      totalCorrect: totalCorrectCount,
+      totalWrong: totalWrongCount,
+      totalSkipped: totalSkippedCount,
+      submittedAt: new Date().toLocaleTimeString()
+    };
+
+    // 1. Instant Local Storage Update (Reflects instantly on same machine)
+    try {
+      const qKey = `quizguard_quiz_${resolvedQuizId}`;
+      const qRaw = localStorage.getItem(qKey);
+      if (qRaw) {
+        const qObj = JSON.parse(qRaw);
+        if (!qObj.participants) qObj.participants = {};
+        qObj.participants[participantId] = studentResultObj;
+        localStorage.setItem(qKey, JSON.stringify(qObj));
+      }
+
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('quizguard_host_quizzes_')) {
+          try {
+            const list = JSON.parse(localStorage.getItem(key) || '[]');
+            const idx = list.findIndex((item: any) => item.id === resolvedQuizId);
+            if (idx >= 0) {
+              if (!list[idx].participants) list[idx].participants = {};
+              list[idx].participants[participantId] = studentResultObj;
+              localStorage.setItem(key, JSON.stringify(list));
+            }
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
+
+    // 2. Real-time Broadcast to Host Scoreboard
+    broadcastMessage({
+      type: 'PARTICIPANT_SUBMITTED' as any,
+      quizId: resolvedQuizId,
+      participant: studentResultObj
+    });
+
+    // 3. Supabase Upsert using only standard, verified table columns
     if (supabase && resolvedQuizId) {
-      await supabase.from('participants').upsert({
-        id: participantId,
-        quiz_id: resolvedQuizId,
-        name: name,
-        score: finalScore,
-        time_taken: timeTaken,
-        strikes: strikes,
-        status: disqualified ? 'Disqualified' : 'Completed',
-        violations: violations,
-        answers: answers,
-        review_flags: reviewFlags,
-        section_summaries: calculatedSummaries,
-        question_details: calculatedDetails,
-        total_correct: totalCorrectCount,
-        total_wrong: totalWrongCount,
-        total_skipped: totalSkippedCount,
-        updated_at: new Date().toISOString()
-      });
+      try {
+        await supabase.from('participants').upsert({
+          id: participantId,
+          quiz_id: resolvedQuizId,
+          name: name,
+          score: finalScore,
+          time_taken: timeTaken,
+          strikes: strikes,
+          status: disqualified ? 'Disqualified' : 'Completed',
+          violations: violations,
+          answers: enrichedAnswers,
+          updated_at: new Date().toISOString()
+        });
+      } catch (err) {
+        console.error('Supabase submission sync error:', err);
+      }
     }
   };
+
+  const handlePrintScorecard = () => {
+    window.print();
+  };
+
+  const cardCls = isLight 
+    ? 'bg-white border-slate-200 text-slate-900 shadow-sm' 
+    : 'bg-slate-900 border-slate-800 text-white shadow-xl';
+
+  const subCardCls = isLight 
+    ? 'bg-slate-50 border-slate-200 text-slate-900' 
+    : 'bg-slate-950 border-slate-800 text-white';
+
+  const inputCls = isLight 
+    ? 'bg-white border-slate-300 text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600' 
+    : 'bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:border-cyan-500';
+
+  const textMuted = isLight ? 'text-slate-500' : 'text-slate-400';
+  const textPrimary = isLight ? 'text-slate-900' : 'text-white';
+  const buttonSecCls = isLight 
+    ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300' 
+    : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700';
 
   if (loadingQuiz) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
         <div className={`w-12 h-12 border-4 rounded-full animate-spin mb-4 ${isLight ? 'border-blue-600 border-t-transparent' : 'border-cyan-500 border-t-transparent'}`} />
-        <p className={`font-medium ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>Connecting to examination canvas...</p>
+        <p className={`font-medium ${textMuted}`}>Connecting to examination canvas...</p>
       </div>
     );
   }
@@ -751,15 +868,13 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
           <ShieldAlert className={`w-12 h-12 ${isLight ? 'text-rose-600' : 'text-rose-500'}`} />
         </div>
         <h2 className={`text-2xl font-black mb-2 ${isLight ? 'text-rose-600' : 'text-rose-400'}`}>Session Disqualified</h2>
-        <p className={`text-xs mb-6 leading-relaxed ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+        <p className={`text-xs mb-6 leading-relaxed ${textMuted}`}>
           This session exceeded the maximum integrity threshold (3 strikes). Your examination has been locked.
         </p>
-        <div className={`p-4 rounded-2xl border text-left space-y-2 text-xs font-mono max-h-48 overflow-y-auto ${
-          isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'
-        }`}>
-          <span className={`block font-bold mb-1 ${isLight ? 'text-slate-700' : 'text-slate-400'}`}>Recorded Proctor Violations:</span>
+        <div className={`p-4 rounded-2xl border text-left space-y-2 text-xs font-mono max-h-48 overflow-y-auto ${subCardCls}`}>
+          <span className={`block font-bold mb-1 ${textMuted}`}>Recorded Proctor Violations:</span>
           {violations.map((v, i) => (
-            <div key={i} className={isLight ? 'text-rose-600' : 'text-rose-400'}>� [{v.timestamp}] {v.message}</div>
+            <div key={i} className={isLight ? 'text-rose-600' : 'text-rose-400'}>• [{v.timestamp}] {v.message}</div>
           ))}
         </div>
       </div>
@@ -768,14 +883,12 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
 
   if (isAssessmentStopped) {
     return (
-      <div className={`max-w-md mx-auto my-12 p-8 border rounded-3xl text-center shadow-2xl ${
-        isLight ? 'bg-white border-slate-200 text-slate-900' : 'bg-slate-900 border-slate-800 text-white'
-      }`}>
+      <div className={`max-w-md mx-auto my-12 p-8 border rounded-3xl text-center shadow-2xl ${cardCls}`}>
         <div className={`p-3 rounded-2xl w-fit mx-auto mb-4 border ${isLight ? 'bg-red-50 border-red-200' : 'bg-red-500/10 border-red-500/20'}`}>
           <AlertOctagon className={`w-12 h-12 ${isLight ? 'text-red-600' : 'text-red-400'}`} />
         </div>
         <h2 className="text-2xl font-bold mb-2">Examination Concluded</h2>
-        <p className={`text-xs mb-6 leading-relaxed ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+        <p className={`text-xs mb-6 leading-relaxed ${textMuted}`}>
           This assessment has been paused or concluded by the proctor. Please wait if the session is resumed.
         </p>
       </div>
@@ -784,12 +897,10 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
 
   if (!quiz) {
     return (
-      <div className={`max-w-md mx-auto my-12 p-8 border rounded-2xl text-center shadow-xl ${
-        isLight ? 'bg-white border-slate-200 text-slate-900' : 'bg-slate-900 border-slate-800 text-white'
-      }`}>
+      <div className={`max-w-md mx-auto my-12 p-8 border rounded-2xl text-center shadow-xl ${cardCls}`}>
         <AlertTriangle className="w-16 h-16 text-amber-500 mx-auto mb-4" />
         <h2 className="text-2xl font-bold mb-2">Assessment Not Found</h2>
-        <p className={`text-xs mb-6 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+        <p className={`text-xs mb-6 ${textMuted}`}>
           The assessment URL or ID is invalid. Verify the link from your instructor.
         </p>
         <button
@@ -804,7 +915,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     );
   }
 
-  // Finished & Scorecard View
   if (isFinished) {
     const totalMax = quiz.questions.reduce((sum, q) => sum + (q.marks || 10), 0);
     const percentage = totalMax > 0 ? ((score / totalMax) * 100).toFixed(1) : '0';
@@ -819,49 +929,59 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     });
 
     return (
-      <div className="max-w-4xl mx-auto my-8 space-y-8 animate-fade-in">
-        <div className={`p-8 border rounded-3xl text-center shadow-2xl space-y-6 ${
-          isLight ? 'bg-white border-slate-200 text-slate-900' : 'bg-slate-900 border-slate-800 text-white'
-        }`}>
-          <div className={`inline-block p-4 rounded-3xl border ${isLight ? 'bg-amber-50 border-amber-200' : 'bg-amber-500/10 border-amber-500/20'}`}>
+      <div className="max-w-4xl mx-auto my-8 space-y-8 animate-fade-in print:my-0 print:space-y-4">
+        <div className={`p-8 border rounded-3xl text-center shadow-2xl space-y-6 ${cardCls} print:shadow-none print:border-black print:p-4`}>
+          <div className="flex justify-between items-center print:hidden">
+            <span className={`text-xs font-mono uppercase font-bold tracking-widest ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>
+              Academic Evaluation Statement
+            </span>
+            <button
+              onClick={handlePrintScorecard}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition ${buttonSecCls}`}
+              title="Print or Save as PDF"
+            >
+              <Printer className="w-4 h-4 text-emerald-600" /> Print / Save PDF
+            </button>
+          </div>
+
+          <div className={`inline-block p-4 rounded-3xl border print:hidden ${isLight ? 'bg-amber-50 border-amber-200' : 'bg-amber-500/10 border-amber-500/20'}`}>
             <Trophy className={`w-14 h-14 ${isLight ? 'text-amber-500' : 'text-amber-400'}`} />
           </div>
+
           <div>
-            <h2 className="text-2xl sm:text-3xl font-black">Assessment Submitted</h2>
-            <p className={`text-xs mt-1 font-mono ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
-              Candidate: <strong className={isLight ? 'text-blue-700' : 'text-cyan-300'}>{name}</strong> � Time Taken: {Math.floor(timeTaken / 60)}m {timeTaken % 60}s
+            <h2 className="text-2xl sm:text-3xl font-black">{quiz.title}</h2>
+            <p className={`text-xs mt-1 font-mono ${textMuted}`}>
+              Candidate: <strong className={isLight ? 'text-blue-700' : 'text-cyan-300'}>{name}</strong> • Time Taken: {Math.floor(timeTaken / 60)}m {timeTaken % 60}s • ID: {participantId}
             </p>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl mx-auto">
-            <div className={`p-4 rounded-2xl border text-center ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
-              <span className={`text-[10px] uppercase font-mono block mb-1 ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>Final Score</span>
+            <div className={`p-4 rounded-2xl border text-center ${subCardCls}`}>
+              <span className={`text-[10px] uppercase font-mono block mb-1 ${textMuted}`}>Final Score</span>
               <span className={`text-2xl sm:text-3xl font-black ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>{score}</span>
-              <span className={`text-xs block ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>/ {totalMax} pts</span>
+              <span className={`text-xs block ${textMuted}`}>/ {totalMax} pts</span>
             </div>
-            <div className={`p-4 rounded-2xl border text-center ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
-              <span className={`text-[10px] uppercase font-mono block mb-1 ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>Percentage</span>
+            <div className={`p-4 rounded-2xl border text-center ${subCardCls}`}>
+              <span className={`text-[10px] uppercase font-mono block mb-1 ${textMuted}`}>Percentage</span>
               <span className="text-2xl sm:text-3xl font-black text-purple-600">{percentage}%</span>
-              <span className={`text-xs block ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>Total Share</span>
+              <span className={`text-xs block ${textMuted}`}>Total Share</span>
             </div>
-            <div className={`p-4 rounded-2xl border text-center ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
-              <span className={`text-[10px] uppercase font-mono block mb-1 ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>Correct</span>
+            <div className={`p-4 rounded-2xl border text-center ${subCardCls}`}>
+              <span className={`text-[10px] uppercase font-mono block mb-1 ${textMuted}`}>Correct</span>
               <span className="text-2xl sm:text-3xl font-black text-emerald-600">{overallStats.correct}</span>
-              <span className={`text-xs block ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>Questions</span>
+              <span className={`text-xs block ${textMuted}`}>Questions</span>
             </div>
-            <div className={`p-4 rounded-2xl border text-center ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
-              <span className={`text-[10px] uppercase font-mono block mb-1 ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>Penalized / Skipped</span>
+            <div className={`p-4 rounded-2xl border text-center ${subCardCls}`}>
+              <span className={`text-[10px] uppercase font-mono block mb-1 ${textMuted}`}>Penalized / Skipped</span>
               <span className="text-2xl sm:text-3xl font-black text-rose-600">{overallStats.wrong}</span>
-              <span className={`text-xs block ${isLight ? 'text-slate-500' : 'text-slate-500'}`}>/ {overallStats.skipped} skipped</span>
+              <span className={`text-xs block ${textMuted}`}>/ {overallStats.skipped} skipped</span>
             </div>
           </div>
 
-          <div className="pt-2">
+          <div className="pt-2 print:hidden">
             <button
               onClick={handleRetakeExam}
-              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold border transition ${
-                isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300' : 'bg-slate-800 hover:bg-slate-700 text-cyan-300 border-slate-700'
-              }`}
+              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold border transition ${buttonSecCls}`}
               title="Clear this attempt and retest from question 1"
             >
               <RefreshCw className="w-3.5 h-3.5" /> Retake Assessment (Test Mode)
@@ -870,18 +990,14 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
         </div>
 
         {Object.keys(sectionSummaries).length > 0 && (
-          <div className={`p-6 rounded-3xl border space-y-4 shadow-xl ${
-            isLight ? 'bg-white border-slate-200 text-slate-900' : 'bg-slate-900/60 border-slate-800 text-white'
-          }`}>
+          <div className={`p-6 rounded-3xl border space-y-4 shadow-xl ${cardCls} print:shadow-none print:border-black`}>
             <h3 className="text-base font-bold flex items-center gap-2">
-              <BarChart3 className={`w-5 h-5 ${isLight ? 'text-blue-700' : 'text-cyan-400'}`} /> Section-Wise Score Breakdown
+              <BarChart3 className={`w-5 h-5 ${isLight ? 'text-blue-700' : 'text-cyan-400'}`} /> Section-Wise Performance Card
             </h3>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               {Object.values(sectionSummaries).map((sec) => (
-                <div key={sec.sectionId} className={`p-4 rounded-2xl border space-y-2 ${
-                  isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'
-                }`}>
+                <div key={sec.sectionId} className={`p-4 rounded-2xl border space-y-2 ${subCardCls}`}>
                   <div className="flex justify-between items-center">
                     <span className="text-xs font-bold">{sec.sectionName}</span>
                     <span className={`text-xs font-mono font-bold ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>
@@ -890,13 +1006,13 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                   </div>
                   <div className="grid grid-cols-3 gap-1 pt-1 text-[11px] font-mono text-center">
                     <div className={`p-1 rounded border ${isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-emerald-950/40 text-emerald-300 border-emerald-900/40'}`}>
-                      ? {sec.correct}
+                      ✓ {sec.correct}
                     </div>
                     <div className={`p-1 rounded border ${isLight ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-rose-950/40 text-rose-300 border-rose-900/40'}`}>
-                      ? {sec.wrong}
+                      ✗ {sec.wrong}
                     </div>
-                    <div className={`p-1 rounded border ${isLight ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-slate-900 text-slate-400 border-slate-800'}`}>
-                      � {sec.skipped}
+                    <div className={`p-1 rounded border ${buttonSecCls}`}>
+                      — {sec.skipped}
                     </div>
                   </div>
                 </div>
@@ -905,24 +1021,19 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
           </div>
         )}
 
-        {/* Detailed Question Review */}
-        <div className={`p-6 rounded-3xl border space-y-5 shadow-xl ${
-          isLight ? 'bg-white border-slate-200 text-slate-900' : 'bg-slate-900/60 border-slate-800 text-white'
-        }`}>
+        <div className={`p-6 rounded-3xl border space-y-5 shadow-xl ${cardCls} print:shadow-none print:border-black`}>
           <div className={`flex flex-wrap items-center justify-between gap-3 border-b pb-4 ${isLight ? 'border-slate-200' : 'border-slate-800'}`}>
             <h3 className="text-base font-bold flex items-center gap-2">
               <CheckCircle className={`w-5 h-5 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} /> Question-by-Question Review
             </h3>
 
-            <div className={`flex items-center gap-1.5 p-1 rounded-xl border text-xs ${
-              isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'
-            }`}>
+            <div className={`flex items-center gap-1.5 p-1 rounded-xl border text-xs print:hidden ${subCardCls}`}>
               <button
                 onClick={() => setReviewFilter('all')}
                 className={`px-3 py-1 rounded-lg font-bold transition ${
                   reviewFilter === 'all' 
                     ? (isLight ? 'bg-blue-700 text-white' : 'bg-cyan-600 text-white') 
-                    : (isLight ? 'text-slate-600 hover:text-slate-900' : 'text-slate-400 hover:text-white')
+                    : textMuted
                 }`}
               >
                 All ({quiz.questions.length})
@@ -930,9 +1041,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
               <button
                 onClick={() => setReviewFilter('correct')}
                 className={`px-3 py-1 rounded-lg font-bold transition ${
-                  reviewFilter === 'correct' 
-                    ? (isLight ? 'bg-emerald-600 text-white' : 'bg-emerald-600 text-white') 
-                    : (isLight ? 'text-slate-600 hover:text-slate-900' : 'text-slate-400 hover:text-white')
+                  reviewFilter === 'correct' ? 'bg-emerald-600 text-white' : textMuted
                 }`}
               >
                 Correct ({overallStats.correct})
@@ -940,9 +1049,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
               <button
                 onClick={() => setReviewFilter('wrong')}
                 className={`px-3 py-1 rounded-lg font-bold transition ${
-                  reviewFilter === 'wrong' 
-                    ? (isLight ? 'bg-rose-600 text-white' : 'bg-rose-600 text-white') 
-                    : (isLight ? 'text-slate-600 hover:text-slate-900' : 'text-slate-400 hover:text-white')
+                  reviewFilter === 'wrong' ? 'bg-rose-600 text-white' : textMuted
                 }`}
               >
                 Penalized ({overallStats.wrong})
@@ -950,9 +1057,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
               <button
                 onClick={() => setReviewFilter('skipped')}
                 className={`px-3 py-1 rounded-lg font-bold transition ${
-                  reviewFilter === 'skipped' 
-                    ? (isLight ? 'bg-amber-600 text-white' : 'bg-amber-600 text-white') 
-                    : (isLight ? 'text-slate-600 hover:text-slate-900' : 'text-slate-400 hover:text-white')
+                  reviewFilter === 'skipped' ? 'bg-amber-600 text-white' : textMuted
                 }`}
               >
                 Skipped ({overallStats.skipped})
@@ -982,22 +1087,16 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
               }
 
               return (
-                <div key={q.id} className={`p-5 rounded-2xl border space-y-3 text-xs ${
-                  isLight ? 'bg-slate-50 border-slate-200 text-slate-900' : 'bg-slate-950 border-slate-800 text-white'
-                }`}>
+                <div key={q.id} className={`p-5 rounded-2xl border space-y-3 text-xs ${subCardCls} print:border-black`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <span className={`font-mono font-bold ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>Q{originalIndex + 1}</span>
                       {sec && (
-                        <span className={`text-[10px] px-2 py-0.5 rounded font-mono font-bold border ${
-                          isLight ? 'bg-white text-slate-700 border-slate-200' : 'bg-slate-900 text-slate-300 border-slate-800'
-                        }`}>
+                        <span className={`text-[10px] px-2 py-0.5 rounded font-mono font-bold border ${buttonSecCls}`}>
                           {sec.name}
                         </span>
                       )}
-                      <span className={`uppercase text-[10px] px-2 py-0.5 rounded font-mono border ${
-                        isLight ? 'bg-white text-slate-600 border-slate-200' : 'bg-slate-900 text-slate-400 border-slate-800'
-                      }`}>
+                      <span className={`uppercase text-[10px] px-2 py-0.5 rounded font-mono border ${buttonSecCls}`}>
                         {q.type}
                       </span>
                     </div>
@@ -1011,7 +1110,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
 
                   {q.type === 'multi_fib' && Array.isArray(q.correctAnswer) ? (
                     <div className="space-y-2 pt-1 font-mono">
-                      <span className={`text-[11px] block font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>Multi-Blank Breakdown:</span>
+                      <span className={`text-[11px] block font-bold ${textMuted}`}>Multi-Blank Breakdown:</span>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {q.correctAnswer.map((corr, bIdx) => {
                           const sVal = Array.isArray(userAns) ? userAns[bIdx] : '';
@@ -1023,11 +1122,11 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                                 : (isLight ? 'bg-white border-slate-200 text-slate-800' : 'bg-slate-900 border-slate-800 text-slate-300')
                             }`}>
                               <div className="flex justify-between items-center text-[11px] mb-1">
-                                <span className={`font-bold ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>Blank {bIdx + 1}:</span>
-                                <span className="font-bold">{isCorrect ? '? Correct' : '? Incorrect'}</span>
+                                <span className={`font-bold ${textMuted}`}>Blank {bIdx + 1}:</span>
+                                <span className="font-bold">{isCorrect ? '✓ Correct' : '✗ Incorrect'}</span>
                               </div>
-                              <div className="text-[11px]">Your Entry: <strong className={isCorrect ? 'text-emerald-600' : 'text-rose-500'}>{sVal || '�'}</strong></div>
-                              <div className={`text-[11px] ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>Answer Key: <strong className="text-emerald-600">{corr}</strong></div>
+                              <div className="text-[11px]">Your Entry: <strong className={isCorrect ? 'text-emerald-600' : 'text-rose-500'}>{sVal || '—'}</strong></div>
+                              <div className={`text-[11px] ${textMuted}`}>Answer Key: <strong className="text-emerald-600">{corr}</strong></div>
                             </div>
                           );
                         })}
@@ -1036,14 +1135,14 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 font-mono">
                       <div className={`p-3 rounded-xl border ${isLight ? 'bg-white border-slate-200' : 'bg-slate-900 border-slate-800'}`}>
-                        <span className={`text-[11px] block mb-0.5 ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>Your Response:</span>
-                        <span className={detail?.status === 'correct' ? 'text-emerald-600 font-bold' : detail?.status === 'wrong' ? 'text-rose-500 font-bold' : (isLight ? 'text-slate-600 font-bold' : 'text-slate-400 font-bold')}>
+                        <span className={`text-[11px] block mb-0.5 ${textMuted}`}>Your Response:</span>
+                        <span className={detail?.status === 'correct' ? 'text-emerald-600 font-bold' : detail?.status === 'wrong' ? 'text-rose-500 font-bold' : `${textMuted} font-bold`}>
                           {userAns !== undefined ? (q.type === 'mcq' ? q.options?.[userAns] : String(userAns)) : 'Skipped (No entry)'}
                         </span>
                       </div>
 
                       <div className={`p-3 rounded-xl border ${isLight ? 'bg-white border-slate-200' : 'bg-slate-900 border-slate-800'}`}>
-                        <span className={`text-[11px] block mb-0.5 ${isLight ? 'text-slate-500' : 'text-slate-400'}`}>Correct Answer:</span>
+                        <span className={`text-[11px] block mb-0.5 ${textMuted}`}>Correct Answer:</span>
                         <span className="text-emerald-600 font-bold">
                           {q.type === 'mcq' ? q.options?.[Number(q.correctAnswer)] : String(q.correctAnswer)}
                         </span>
@@ -1070,24 +1169,18 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     );
   }
 
-  // Join Exam Screen (Matches Screenshot)
   if (!isJoined) {
     return (
       <div className={`max-w-md mx-auto my-8 p-6 sm:p-8 border rounded-3xl shadow-2xl transition-colors ${
-        isLight 
-          ? 'bg-white border-slate-200 text-slate-900 shadow-xl' 
-          : 'bg-slate-900 border-slate-800 text-white'
+        isLight ? 'bg-white border-slate-200 text-slate-900 shadow-xl' : 'bg-slate-900 border-slate-800 text-white'
       }`}>
         <h2 className="text-xl font-bold mb-2">{quiz.title}</h2>
         <span className={`text-xs font-mono block mb-4 ${isLight ? 'text-blue-700 font-bold' : 'text-cyan-400'}`}>
-          {quiz.mode === 'marks_challenge' ? `Marks Challenge � ${quiz.totalDurationMinutes || 20} Minutes Total` : 'Classic Proctored Assessment'}
+          {quiz.mode === 'marks_challenge' ? `Marks Challenge • ${quiz.totalDurationMinutes || 20} Minutes Total` : 'Classic Proctored Assessment'}
         </span>
 
-        {/* Examination Rules Banner */}
         <div className={`p-4 rounded-xl mb-6 text-left border ${
-          isLight 
-            ? 'bg-amber-50 border-amber-200 text-amber-900' 
-            : 'bg-amber-500/10 border-amber-500/20 text-amber-200/80'
+          isLight ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-amber-500/10 border-amber-500/20 text-amber-200/80'
         }`}>
           <div className={`flex items-center gap-2 font-semibold text-xs mb-2 ${isLight ? 'text-amber-700' : 'text-amber-400'}`}>
             <AlertTriangle className="w-4 h-4" /> Examination Rules
@@ -1110,11 +1203,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className={`w-full px-4 py-2.5 rounded-xl border text-sm focus:outline-none transition ${
-                isLight 
-                  ? 'bg-white border-slate-300 text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600' 
-                  : 'bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:border-cyan-500'
-              }`}
+              className={`w-full px-4 py-2.5 rounded-xl border text-sm focus:outline-none transition ${inputCls}`}
             />
           </div>
 
@@ -1184,7 +1273,26 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
 
   return (
     <div className="max-w-7xl mx-auto my-4 space-y-5 relative animate-fade-in">
-      {/* Auto-Submit Lockout Overlay */}
+      {liveProctorWarning && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 max-w-lg w-full px-4 animate-bounce">
+          <div className="bg-rose-600 text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between gap-3 border border-rose-400">
+            <div className="flex items-center gap-2.5">
+              <BellRing className="w-5 h-5 shrink-0" />
+              <div className="text-xs font-bold leading-tight">
+                <span className="block uppercase text-[10px] tracking-wider text-rose-200">Official Proctor Alert:</span>
+                {liveProctorWarning}
+              </div>
+            </div>
+            <button
+              onClick={() => setLiveProctorWarning(null)}
+              className="text-white hover:text-rose-200 text-xs px-2 py-1 bg-rose-700 rounded-lg shrink-0"
+            >
+              Acknowledge
+            </button>
+          </div>
+        </div>
+      )}
+
       {isAutoSubmitting && (
         <div className="fixed inset-0 bg-black/90 z-50 flex flex-col items-center justify-center p-6 text-center">
           <div className="p-4 bg-rose-500/10 rounded-3xl border border-rose-500/30 mb-4 animate-bounce">
@@ -1235,9 +1343,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
 
           <button
             onClick={() => setIsPaletteOpenMobile(!isPaletteOpenMobile)}
-            className={`lg:hidden p-2.5 rounded-xl border transition ${
-              isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
-            }`}
+            className={`lg:hidden p-2.5 rounded-xl border transition ${buttonSecCls}`}
             title="Toggle Question Palette"
           >
             {isPaletteOpenMobile ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
@@ -1262,7 +1368,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
             className={`px-4 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${
               activeSectionFilter === 'all'
                 ? (isLight ? 'bg-blue-700 text-white shadow-sm' : 'bg-cyan-600 text-white shadow-md')
-                : (isLight ? 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100' : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white')
+                : buttonSecCls
             }`}
           >
             All Sections ({quiz.questions.length}Q)
@@ -1282,7 +1388,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                 className={`px-4 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-2 ${
                   activeSectionFilter === sec.id || currentQ?.sectionId === sec.id
                     ? (isLight ? 'bg-blue-700 text-white shadow-sm' : 'bg-cyan-600 text-white shadow-md')
-                    : (isLight ? 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100' : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white')
+                    : buttonSecCls
                 }`}
               >
                 <span>{sec.name}</span>
@@ -1334,7 +1440,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
               <button
                 onClick={() => handleClearResponse(currentQ.id)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition ${
-                  isLight ? 'bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border-slate-200' : 'bg-slate-800 hover:bg-rose-950/40 border-slate-700 hover:border-rose-500/40 text-slate-400 hover:text-rose-300'
+                  isLight ? 'bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border-slate-200' : 'bg-slate-800 hover:bg-rose-950/40 text-slate-400 hover:text-rose-300 border-slate-700'
                 }`}
               >
                 <RotateCcw className="w-3.5 h-3.5" /> Clear Response
@@ -1369,11 +1475,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                       placeholder={`Enter answer for Blank ${bIdx + 1}...`}
                       value={(answers[currentQ.id]?.[bIdx] as string) || ''}
                       onChange={(e) => handleMultiBlankAnswer(currentQ.id, bIdx, e.target.value)}
-                      className={`w-full px-4 py-2.5 rounded-xl border text-sm font-medium focus:outline-none ${
-                        isLight 
-                          ? 'bg-white border-slate-300 text-slate-900 focus:border-blue-600' 
-                          : 'bg-slate-800 border-slate-700 text-white focus:border-cyan-500'
-                      }`}
+                      className={`w-full px-4 py-2.5 rounded-xl border text-sm font-medium focus:outline-none ${inputCls}`}
                     />
                   </div>
                 ))}
@@ -1389,11 +1491,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                   placeholder="Type your response here..."
                   value={(answers[currentQ.id] as string) || ''}
                   onChange={(e) => handleTextAnswer(currentQ.id, e.target.value)}
-                  className={`w-full px-4 py-3 rounded-xl border text-sm font-medium focus:outline-none ${
-                    isLight 
-                      ? 'bg-white border-slate-300 text-slate-900 focus:border-blue-600' 
-                      : 'bg-slate-800 border-slate-700 text-white focus:border-cyan-500'
-                  }`}
+                  className={`w-full px-4 py-3 rounded-xl border text-sm font-medium focus:outline-none ${inputCls}`}
                 />
               </div>
             ) : (
@@ -1429,9 +1527,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                 <button
                   onClick={() => navigateTo(Math.max(0, currentIdx - 1))}
                   disabled={currentIdx === 0 || isAutoSubmitting}
-                  className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold transition disabled:opacity-30 border ${
-                    isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
-                  }`}
+                  className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold transition disabled:opacity-30 border ${buttonSecCls}`}
                 >
                   <ArrowLeft className="w-4 h-4" /> Previous
                 </button>
@@ -1442,7 +1538,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                   className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold border transition ${
                     reviewFlags[currentQ.id]
                       ? (isLight ? 'bg-purple-50 border-purple-400 text-purple-700' : 'bg-purple-600/30 border-purple-500 text-purple-300')
-                      : (isLight ? 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200' : 'bg-slate-800 border-slate-700 text-purple-300 hover:bg-slate-700')
+                      : buttonSecCls
                   }`}
                 >
                   <Flag className="w-3.5 h-3.5" />
@@ -1465,9 +1561,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
 
         {/* Right Column: Palette */}
         <div className={`space-y-5 ${isPaletteOpenMobile ? 'block' : 'hidden lg:block'}`}>
-          <div className={`p-6 rounded-3xl border space-y-5 ${
-            isLight ? 'bg-white border-slate-200 text-slate-900 shadow-sm' : 'bg-slate-900 border-slate-800 text-white shadow-xl'
-          }`}>
+          <div className={`p-6 rounded-3xl border space-y-5 ${cardCls}`}>
             <h3 className="text-sm font-bold flex items-center gap-2">
               <Bookmark className={`w-4 h-4 ${isLight ? 'text-blue-700' : 'text-cyan-400'}`} /> Question Palette
             </h3>
@@ -1499,12 +1593,10 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                 const secAnswered = group.questions.filter(({ q }) => isQuestionAnswered(q)).length;
 
                 return (
-                  <div key={secId} className={`p-3 rounded-2xl border space-y-2 ${
-                    isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950/50 border-slate-800/80'
-                  }`}>
+                  <div key={secId} className={`p-3 rounded-2xl border space-y-2 ${subCardCls}`}>
                     <div className="flex justify-between items-center text-[11px] font-mono font-bold">
                       <span className={isLight ? 'text-blue-800' : 'text-cyan-400'}>{group.section ? group.section.name : 'Questions'}</span>
-                      <span className={isLight ? 'text-slate-500' : 'text-slate-400'}>{secAnswered}/{group.questions.length} Attempted</span>
+                      <span className={textMuted}>{secAnswered}/{group.questions.length} Attempted</span>
                     </div>
 
                     <div className="grid grid-cols-5 gap-2 pt-1">
@@ -1516,9 +1608,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                           ? 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200' 
                           : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-500';
 
-                        if (status === 'answered') badgeColor = 'bg-emerald-600 text-white border-emerald-500 shadow-sm';
-                        else if (status === 'review') badgeColor = 'bg-purple-600 text-white border-purple-500 shadow-sm';
-                        else if (status === 'answered_review') badgeColor = 'bg-purple-600 text-white border-purple-500 ring-2 ring-emerald-400';
+                        if (status === 'answered') badgeColor = 'bg-emerald-600 text-white border-emerald-600 shadow-sm';
+                        else if (status === 'review') badgeColor = 'bg-purple-600 text-white border-purple-600 shadow-sm';
+                        else if (status === 'answered_review') badgeColor = 'bg-purple-600 text-white border-purple-600 ring-2 ring-emerald-400';
                         else if (status === 'skipped') badgeColor = 'bg-amber-600 text-white border-amber-500';
 
                         return (
@@ -1546,12 +1638,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
         </div>
       </div>
 
-      {/* Confirmation Pre-Submit Modal */}
       {showSubmitModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className={`max-w-lg w-full border p-6 sm:p-8 rounded-3xl space-y-6 shadow-2xl ${
-            isLight ? 'bg-white border-slate-200 text-slate-900' : 'bg-slate-900 border-slate-800 text-white'
-          }`}>
+          <div className={`max-w-lg w-full border p-6 sm:p-8 rounded-3xl space-y-6 shadow-2xl ${cardCls}`}>
             <div className="text-center space-y-1">
               <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-2 border ${
                 isLight ? 'bg-amber-50 border-amber-200' : 'bg-amber-500/10 border-amber-500/20'
@@ -1559,15 +1648,13 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                 <AlertCircle className={`w-6 h-6 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
               </div>
               <h3 className="text-xl font-bold">Confirm Examination Submission</h3>
-              <p className={`text-xs ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+              <p className={`text-xs ${textMuted}`}>
                 Please review your question attempts before confirming final submission.
               </p>
             </div>
 
-            <div className={`p-3 rounded-2xl border flex justify-between items-center text-xs font-mono ${
-              isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'
-            }`}>
-              <span className={`flex items-center gap-1.5 ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+            <div className={`p-3 rounded-2xl border flex justify-between items-center text-xs font-mono ${subCardCls}`}>
+              <span className={`flex items-center gap-1.5 ${textMuted}`}>
                 <Clock className={`w-4 h-4 ${isLight ? 'text-blue-700' : 'text-cyan-400'}`} /> Time Remaining:
               </span>
               <span className={`font-bold text-sm ${isLight ? 'text-blue-700' : 'text-cyan-300'}`}>
@@ -1588,7 +1675,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                 <span className={`font-black text-xl block ${isLight ? 'text-purple-700' : 'text-purple-400'}`}>{flaggedCount}</span>
                 <span className="text-[10px] uppercase tracking-wider block mt-0.5 font-bold opacity-80">Review</span>
               </div>
-              <div className={`p-3 rounded-2xl border ${isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-950 border-slate-800'}`}>
+              <div className={`p-3 rounded-2xl border ${subCardCls}`}>
                 <span className="font-black text-xl block">{notVisitedCount}</span>
                 <span className="text-[10px] uppercase tracking-wider block mt-0.5 opacity-80">Not Visited</span>
               </div>
@@ -1597,11 +1684,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
             <div className="flex items-center gap-3 pt-2">
               <button
                 onClick={() => setShowSubmitModal(false)}
-                className={`flex-1 py-3 font-bold rounded-xl text-xs border transition ${
-                  isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
-                }`}
+                className={`flex-1 py-3 font-bold rounded-xl text-xs border transition ${buttonSecCls}`}
               >
-                ? Return to Test
+                ← Return to Test
               </button>
               <button
                 onClick={() => handleSubmit(false)}

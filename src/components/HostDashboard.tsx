@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+Ôªøimport React, { useState, useEffect } from 'react';
 import { Quiz, Question, QuestionType, QuizMode, QuizSection, StudentResult, ThemeColor, THEME_CONFIG, QuestionBankItem } from '../types';
-import { saveQuiz, supabase } from '../supabase';
+import { saveQuiz, supabase, subscribeToMessages, broadcastMessage } from '../supabase';
 import { PieChart } from './PieChart';
 import { 
   Shield, Plus, Copy, Check, ExternalLink, LogOut, Trash2, Users, 
@@ -42,15 +42,15 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [activeQuiz, setActiveQuiz] = useState<Quiz | null>(null);
 
-  // Saved Assessments Management
   const [editingQuizId, setEditingQuizId] = useState<string | null>(null);
   const [quizSearch, setQuizSearch] = useState<string>('');
   const [quizPage, setQuizPage] = useState<number>(1);
-
-  // Staged Question Editing
   const [editingQuestionIndex, setEditingQuestionIndex] = useState<number | null>(null);
 
-  // Assessment Settings
+  const [customWarningText, setCustomWarningText] = useState<string>('');
+  const [targetStudentForWarning, setTargetStudentForWarning] = useState<string | null>(null);
+  const [incidentLogs, setIncidentLogs] = useState<Array<{ timestamp: string; studentName: string; reason: string; strikes: number }>>([]);
+
   const [quizMode, setQuizMode] = useState<QuizMode>('marks_challenge');
   const [newTitle, setNewTitle] = useState('');
   const [totalDurationMin, setTotalDurationMin] = useState<number>(20);
@@ -58,17 +58,14 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
   const [sections, setSections] = useState<QuizSection[]>(DEFAULT_SECTIONS);
   const [showSectionConfig, setShowSectionConfig] = useState<boolean>(false);
 
-  // Randomization Settings
   const [shuffleQuestions, setShuffleQuestions] = useState<boolean>(true);
   const [shuffleOptions, setShuffleOptions] = useState<boolean>(true);
 
-  // Question Bank States
   const [questionBank, setQuestionBank] = useState<QuestionBankItem[]>([]);
   const [isBankModalOpen, setIsBankModalOpen] = useState<boolean>(false);
   const [bankSearchQuery, setBankSearchQuery] = useState<string>('');
   const [bankTypeFilter, setBankTypeFilter] = useState<'all' | 'mcq' | 'fib' | 'multi_fib'>('all');
 
-  // Question Builder States
   const [selectedSectionId, setSelectedSectionId] = useState<string>('sec_3m');
   const [qType, setQType] = useState<QuestionType>('mcq');
   const [qText, setQText] = useState('');
@@ -171,52 +168,168 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
     setDraftQuestions(prev => [...prev, newQ]);
   };
 
+  // Real-time broadcast and participant submission listener
   useEffect(() => {
-    if (!activeQuiz || !supabase) return;
+    if (!activeQuiz) return;
+
+    const unsubscribe = subscribeToMessages((msg: any) => {
+      if (msg.type === 'PARTICIPANT_INCIDENT' && msg.quizId === activeQuiz.id) {
+        setIncidentLogs(prev => [
+          {
+            timestamp: new Date().toLocaleTimeString(),
+            studentName: msg.name || 'Candidate',
+            reason: msg.reason,
+            strikes: msg.strikes
+          },
+          ...prev.slice(0, 19)
+        ]);
+      }
+
+      if (msg.type === 'PARTICIPANT_SUBMITTED' && msg.quizId === activeQuiz.id && msg.participant) {
+        setActiveQuiz(prev => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            participants: {
+              ...(prev.participants || {}),
+              [msg.participant.id]: msg.participant
+            }
+          };
+        });
+      }
+    });
+
+    return () => unsubscribe();
+  }, [activeQuiz?.id]);
+
+  // Robust live participant fetcher with local storage fallback
+  useEffect(() => {
+    if (!activeQuiz) return;
 
     const fetchLiveParticipants = async () => {
+      const pMap: Record<string, StudentResult> = {};
+
+      // 1. Read locally cached participant results
       try {
-        const { data, error } = await supabase
-          .from('participants')
-          .select('*')
-          .eq('quiz_id', activeQuiz.id);
-
-        if (data && !error) {
-          const pMap: Record<string, StudentResult> = {};
-          data.filter((p: any) => !p.id.startsWith('QUIZ_STATE_')).forEach((p: any) => {
-            let vList = p.violations;
-            if (typeof vList === 'string') {
-              try { vList = JSON.parse(vList); } catch (e) {}
-            }
-
-            pMap[p.id] = {
-              id: p.id,
-              name: p.name,
-              score: p.score || 0,
-              timeTakenSeconds: p.time_taken || 0,
-              strikes: p.strikes || 0,
-              status: p.status || 'Active',
-              violations: Array.isArray(vList) ? vList : [],
-              answers: p.answers || {},
-              reviewFlags: p.review_flags || {},
-              sectionSummaries: p.section_summaries || {},
-              questionDetails: p.question_details || {},
-              totalCorrect: p.total_correct || 0,
-              totalWrong: p.total_wrong || 0,
-              totalSkipped: p.total_skipped || 0,
-              submittedAt: p.updated_at
-            };
-          });
-
-          setActiveQuiz((prev) => (prev ? { ...prev, participants: pMap } : null));
+        const localDirect = localStorage.getItem(`quizguard_quiz_${activeQuiz.id}`);
+        if (localDirect) {
+          const parsed = JSON.parse(localDirect);
+          if (parsed.participants) {
+            Object.assign(pMap, parsed.participants);
+          }
         }
       } catch (e) {}
+
+      // 2. Fetch from Supabase and decode evaluation results
+      if (supabase) {
+        try {
+          const { data, error } = await supabase
+            .from('participants')
+            .select('*')
+            .eq('quiz_id', activeQuiz.id);
+
+          if (data && !error) {
+            data.filter((p: any) => !p.id.startsWith('QUIZ_STATE_')).forEach((p: any) => {
+              let vList = p.violations;
+              if (typeof vList === 'string') {
+                try { vList = JSON.parse(vList); } catch (e) { vList = []; }
+              }
+
+              let pAnswers = p.answers || {};
+              if (typeof pAnswers === 'string') {
+                try { pAnswers = JSON.parse(pAnswers); } catch (e) { pAnswers = {}; }
+              }
+
+              const pEval = pAnswers.__evaluation || {};
+
+              let totalCorrect = p.total_correct ?? pEval.totalCorrect;
+              let totalWrong = p.total_wrong ?? pEval.totalWrong;
+              let totalSkipped = p.total_skipped ?? pEval.totalSkipped;
+
+              // Automatic fallback calculation if metrics were not stored directly
+              if (totalCorrect === undefined && activeQuiz.questions && (p.status === 'Completed' || p.score > 0)) {
+                let c = 0, w = 0, s = 0;
+                activeQuiz.questions.forEach(q => {
+                  const ans = pAnswers[q.id];
+                  if (ans === undefined || ans === null || String(ans).trim() === '') s++;
+                  else if (q.type === 'mcq' && Number(ans) === Number(q.correctAnswer)) c++;
+                  else if (q.type === 'fib' && String(ans).trim().toLowerCase() === String(q.correctAnswer).trim().toLowerCase()) c++;
+                  else if (q.type === 'multi_fib') {
+                    const cList = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
+                    const uList = Array.isArray(ans) ? ans : [];
+                    const matches = cList.filter((exp, idx) => String(uList[idx] || '').trim().toLowerCase() === String(exp).trim().toLowerCase()).length;
+                    if (matches > 0) c++; else w++;
+                  } else w++;
+                });
+                totalCorrect = c;
+                totalWrong = w;
+                totalSkipped = s;
+              }
+
+              pMap[p.id] = {
+                id: p.id,
+                name: p.name,
+                score: typeof p.score === 'number' ? p.score : Number(p.score || 0),
+                timeTakenSeconds: p.time_taken || 0,
+                strikes: p.strikes || 0,
+                status: p.status || 'Active',
+                violations: Array.isArray(vList) ? vList : [],
+                answers: pAnswers,
+                reviewFlags: p.review_flags || pEval.reviewFlags || {},
+                sectionSummaries: p.section_summaries || pEval.sectionSummaries || {},
+                questionDetails: p.question_details || pEval.questionDetails || {},
+                totalCorrect: totalCorrect ?? 0,
+                totalWrong: totalWrong ?? 0,
+                totalSkipped: totalSkipped ?? 0,
+                submittedAt: p.updated_at
+              };
+            });
+          }
+        } catch (e) {}
+      }
+
+      setActiveQuiz((prev) => (prev ? { ...prev, participants: pMap } : null));
     };
 
     fetchLiveParticipants();
     const interval = setInterval(fetchLiveParticipants, 2000);
     return () => clearInterval(interval);
   }, [activeQuiz?.id]);
+
+  const handleSendProctorWarning = () => {
+    if (!activeQuiz || !customWarningText.trim()) return;
+
+    broadcastMessage({
+      type: 'PROCTOR_WARNING' as any,
+      quizId: activeQuiz.id,
+      targetParticipantId: targetStudentForWarning,
+      message: customWarningText.trim()
+    });
+
+    alert(targetStudentForWarning ? 'Direct warning transmitted to candidate!' : 'Broadcast warning displayed to all candidates!');
+    setCustomWarningText('');
+    setTargetStudentForWarning(null);
+  };
+
+  const handleAdjustStrikes = async (student: StudentResult, newStrikes: number) => {
+    if (!activeQuiz) return;
+    const clamped = Math.max(0, Math.min(3, newStrikes));
+    const newStatus = clamped >= 3 ? 'Disqualified' : 'Active';
+
+    if (supabase) {
+      await supabase.from('participants').update({
+        strikes: clamped,
+        status: newStatus
+      }).eq('id', student.id);
+    }
+
+    broadcastMessage({
+      type: 'PROCTOR_STRIKE_ADJUST' as any,
+      quizId: activeQuiz.id,
+      targetParticipantId: student.id,
+      newStrikes: clamped
+    });
+  };
 
   const handleRegister = (e: React.FormEvent) => {
     e.preventDefault();
@@ -442,7 +555,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
     setSaveAlsoToBank(false);
   };
 
-  // Launch assessment WITHOUT changing host theme
   const handleLaunchOrUpdateQuiz = async () => {
     let currentDrafts = [...draftQuestions];
 
@@ -470,7 +582,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
       shuffleQuestions,
       shuffleOptions,
       pacingMode,
-      theme: 'slate', // Neutral default, clients choose their own display theme
+      theme: 'slate',
       questions: currentDrafts,
       status: 'live',
       participants: existingQuiz ? existingQuiz.participants : {},
@@ -482,7 +594,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
     setQuizzes(updated);
     localStorage.setItem(`quizguard_host_quizzes_${hostEmail}`, JSON.stringify(updated));
 
-    // Instant switch to active view WITHOUT modifying active theme!
     setActiveQuiz(savedQuizObj);
     setEditingQuizId(null);
     setDraftQuestions([]);
@@ -708,7 +819,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                 <input
                   type="password"
                   required
-                  placeholder="ïïïïïïïï"
+                  placeholder="‚Ä¢‚Ä¢‚Ä¢‚Ä¢‚Ä¢‚Ä¢‚Ä¢‚Ä¢"
                   value={loginPassword}
                   onChange={(e) => setLoginPassword(e.target.value)}
                   className={`w-full px-4 py-2.5 rounded-xl border text-sm focus:outline-none ${inputCls}`}
@@ -842,7 +953,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
     const lowScore = participantsList.filter(s => s.score < totalMax * 0.5).length;
 
     const scoreChartData = [
-      { label: 'High (=80%)', value: highScore, color: '#7c3aed' },
+      { label: 'High (‚â•80%)', value: highScore, color: '#7c3aed' },
       { label: 'Average (50-79%)', value: medScore, color: '#ea580c' },
       { label: 'Review (<50%)', value: lowScore, color: '#db2777' },
     ];
@@ -866,7 +977,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
             </div>
             <h1 className={`text-2xl font-black mt-1 ${textPrimary}`}>{activeQuiz.title}</h1>
             <p className={`text-xs ${textMuted}`}>
-              {activeQuiz.questions.length} Questions ï Maximum Score: <span className={`font-mono font-bold ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>{totalMax} pts</span>
+              {activeQuiz.questions.length} Questions ‚Ä¢ Maximum Score: <span className={`font-mono font-bold ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>{totalMax} pts</span>
             </p>
           </div>
 
@@ -901,12 +1012,12 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                 isLight ? 'bg-blue-700 hover:bg-blue-800 text-white border-blue-700' : 'bg-blue-600 hover:bg-blue-500 text-white border-blue-500'
               }`}
             >
-              ? Back to Studio
+              ‚Üê Back to Studio
             </button>
           </div>
         </div>
 
-        {/* Candidate Invitation Link Banner */}
+        {/* Candidate Invitation Link */}
         <div className={`p-6 rounded-3xl border shadow-sm space-y-3 ${isLight ? 'bg-blue-50/60 border-blue-200' : 'bg-slate-900/80 border-cyan-500/30'}`}>
           <div className="flex items-center justify-between">
             <span className={`text-xs font-mono uppercase tracking-widest font-bold ${isLight ? 'text-blue-800' : 'text-cyan-400'}`}>
@@ -943,6 +1054,69 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
           </div>
         </div>
 
+        {/* Live Proctor Interventions */}
+        <div className={`p-6 rounded-3xl border space-y-5 ${cardCls}`}>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
+            <div>
+              <h3 className={`text-base font-bold flex items-center gap-2 ${textPrimary}`}>
+                <BellRing className="w-5 h-5 text-purple-600" /> Live Proctor Interventions & Announcements
+              </h3>
+              <p className={`text-xs ${textMuted}`}>Transmit direct warning banners to individual candidates or broadcast to the entire room.</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="md:col-span-2 space-y-2">
+              <label className={`text-xs font-bold block ${textMuted}`}>Warning or Notice Text:</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="e.g. Please look directly at your screen and exit all background apps."
+                  value={customWarningText}
+                  onChange={(e) => setCustomWarningText(e.target.value)}
+                  className={`flex-1 px-4 py-2.5 rounded-xl border text-xs focus:outline-none ${inputCls}`}
+                />
+                <button
+                  onClick={handleSendProctorWarning}
+                  className={`px-5 py-2.5 font-bold rounded-xl text-xs text-white transition ${
+                    isLight ? 'bg-blue-700 hover:bg-blue-800' : 'bg-purple-600 hover:bg-purple-500'
+                  }`}
+                >
+                  Dispatch Alert
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className={`text-xs font-bold block ${textMuted}`}>Target Candidate:</label>
+              <select
+                value={targetStudentForWarning || ''}
+                onChange={(e) => setTargetStudentForWarning(e.target.value ? e.target.value : null)}
+                className={`w-full px-3.5 py-2.5 rounded-xl border text-xs focus:outline-none ${inputCls}`}
+              >
+                <option value="">Broadcast to All Connected Candidates</option>
+                {participantsList.map(s => (
+                  <option key={s.id} value={s.id}>{s.name} ({s.strikes}/3 Strikes)</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {incidentLogs.length > 0 && (
+            <div className={`p-4 rounded-2xl border space-y-2 text-xs font-mono ${subCardCls}`}>
+              <span className={`block font-bold ${textMuted}`}>Live Security Incident Stream:</span>
+              <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                {incidentLogs.map((log, idx) => (
+                  <div key={idx} className="flex justify-between items-center text-rose-500">
+                    <span>‚Ä¢ [{log.timestamp}] <strong>{log.studentName}</strong>: {log.reason}</span>
+                    <span className="font-bold">({log.strikes}/3 Strikes)</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <PieChart title="Integrity Breakdown" data={statusChartData} isLight={isLight} />
           <PieChart title="Score Brackets" data={scoreChartData} isLight={isLight} />
@@ -954,7 +1128,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
             <h3 className={`text-lg font-bold flex items-center gap-2 ${textPrimary}`}>
               <Trophy className="w-5 h-5 text-amber-500" /> Examination Scoreboard ({participantsList.length})
             </h3>
-            <span className={`text-xs font-mono ${textMuted}`}>Ranked by Score ï Tie-breaker: Time</span>
+            <span className={`text-xs font-mono ${textMuted}`}>Ranked by Score ‚Ä¢ Tie-breaker: Time</span>
           </div>
 
           <div className={`overflow-x-auto rounded-2xl border ${isLight ? 'border-slate-200' : 'border-slate-800'}`}>
@@ -967,59 +1141,85 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                   <th className="py-3 px-4">Time Taken</th>
                   <th className="py-3 px-4">Performance</th>
                   <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Strikes</th>
+                  <th className="py-3 px-4">Strikes Control</th>
                   <th className="py-3 px-4 text-right">Audit</th>
                 </tr>
               </thead>
               <tbody className={`divide-y ${isLight ? 'divide-slate-200 bg-white' : 'divide-slate-800/60'}`}>
-                {participantsList.map((s, idx) => {
-                  let rankBadge = `#${idx + 1}`;
-                  if (idx === 0 && s.status !== 'Disqualified') rankBadge = '?? 1st';
-                  else if (idx === 1 && s.status !== 'Disqualified') rankBadge = '?? 2nd';
-                  else if (idx === 2 && s.status !== 'Disqualified') rankBadge = '?? 3rd';
-
-                  return (
-                    <tr key={s.id} className={`transition ${isLight ? 'hover:bg-slate-50' : 'hover:bg-slate-800/20'}`}>
-                      <td className={`py-3 px-4 font-mono font-bold ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>{rankBadge}</td>
-                      <td className={`py-3 px-4 font-semibold ${textPrimary}`}>{s.name}</td>
-                      <td className={`py-3 px-4 font-mono font-bold ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>
-                        {s.score} / {totalMax} pts
-                      </td>
-                      <td className={`py-3 px-4 font-mono text-xs ${textMuted}`}>
-                        {s.timeTakenSeconds ? `${Math.floor(s.timeTakenSeconds / 60)}m ${s.timeTakenSeconds % 60}s` : 'N/A'}
-                      </td>
-                      <td className="py-3 px-4 font-mono text-xs">
-                        <span className="text-emerald-600 font-bold">{s.totalCorrect || 0}?</span>{' '}
-                        <span className="text-rose-600 font-bold">{s.totalWrong || 0}?</span>
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                          s.status === 'Disqualified'
-                            ? 'bg-red-50 text-red-600 border border-red-200'
-                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                        }`}>
-                          {s.status}
+                {participantsList.map((s, idx) => (
+                  <tr key={s.id} className={`transition ${isLight ? 'hover:bg-slate-50' : 'hover:bg-slate-800/20'}`}>
+                    <td className="py-3 px-4 font-mono font-bold">
+                      <div className="flex items-center gap-1.5">
+                        {idx === 0 && s.status !== 'Disqualified' && <Trophy className="w-4 h-4 text-amber-500 shrink-0" />}
+                        {idx === 1 && s.status !== 'Disqualified' && <Award className="w-4 h-4 text-slate-400 shrink-0" />}
+                        {idx === 2 && s.status !== 'Disqualified' && <Award className="w-4 h-4 text-amber-700 shrink-0" />}
+                        <span className={isLight ? 'text-blue-700' : 'text-cyan-400'}>#{idx + 1}</span>
+                      </div>
+                    </td>
+                    <td className={`py-3 px-4 font-semibold ${textPrimary}`}>{s.name}</td>
+                    <td className={`py-3 px-4 font-mono font-bold ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>
+                      {s.score} / {totalMax} pts
+                    </td>
+                    <td className={`py-3 px-4 font-mono text-xs ${textMuted}`}>
+                      {s.timeTakenSeconds ? `${Math.floor(s.timeTakenSeconds / 60)}m ${s.timeTakenSeconds % 60}s` : '0m 0s'}
+                    </td>
+                    <td className="py-3 px-4 font-mono text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="text-emerald-600 font-bold flex items-center gap-0.5">
+                          <Check className="w-3.5 h-3.5" /> {s.totalCorrect || 0}
                         </span>
-                      </td>
-                      <td className="py-3 px-4">
+                        <span className="text-rose-600 font-bold flex items-center gap-0.5">
+                          <X className="w-3.5 h-3.5" /> {s.totalWrong || 0}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                        s.status === 'Disqualified'
+                          ? 'bg-red-50 text-red-600 border border-red-200'
+                          : s.status === 'Completed'
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          : 'bg-blue-50 text-blue-700 border border-blue-200'
+                      }`}>
+                        {s.status}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => handleAdjustStrikes(s, s.strikes - 1)}
+                          disabled={s.strikes === 0}
+                          className={`px-1.5 py-0.5 rounded text-[10px] border disabled:opacity-30 ${buttonSecCls}`}
+                          title="Forgive strike"
+                        >
+                          -
+                        </button>
                         <span className={`font-mono font-bold px-2 py-0.5 rounded text-xs ${
                           s.strikes === 0 ? (isLight ? 'bg-slate-100 text-slate-600' : 'bg-slate-800 text-slate-400') :
                           s.strikes >= 3 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'
                         }`}>
-                          {s.strikes}/3 Strikes
+                          {s.strikes}/3
                         </span>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <button 
-                          onClick={() => { setInspectedStudent(s); setInspectTab('sections'); }}
-                          className={`px-3 py-1 text-xs font-medium rounded-lg border transition ${buttonSecCls}`}
+                        <button
+                          onClick={() => handleAdjustStrikes(s, s.strikes + 1)}
+                          disabled={s.strikes >= 3}
+                          className={`px-1.5 py-0.5 rounded text-[10px] border disabled:opacity-30 ${buttonSecCls}`}
+                          title="Add manual strike"
                         >
-                          Inspect Log
+                          +
                         </button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                      </div>
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <button 
+                        onClick={() => { setInspectedStudent(s); setInspectTab('sections'); }}
+                        className={`px-3 py-1 text-xs font-medium rounded-lg border transition ${buttonSecCls}`}
+                      >
+                        Inspect Log
+                      </button>
+                    </td>
+                  </tr>
+                ))}
                 {participantsList.length === 0 && (
                   <tr>
                     <td colSpan={8} className="py-10 text-center text-slate-400 text-xs font-mono">
@@ -1032,6 +1232,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
           </div>
         </div>
 
+        {/* Candidate Audit Modal */}
         {inspectedStudent && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-6">
             <div className={`max-w-xl w-full border p-6 rounded-3xl space-y-4 shadow-2xl ${cardCls}`}>
@@ -1039,10 +1240,10 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                 <div>
                   <h3 className={`text-lg font-bold ${textPrimary}`}>Candidate Audit: {inspectedStudent.name}</h3>
                   <span className={`text-xs font-mono ${textMuted}`}>
-                    Score: {inspectedStudent.score}/{totalMax} pts ï Time: {Math.floor((inspectedStudent.timeTakenSeconds || 0) / 60)}m {(inspectedStudent.timeTakenSeconds || 0) % 60}s
+                    Score: {inspectedStudent.score}/{totalMax} pts ‚Ä¢ Time: {Math.floor((inspectedStudent.timeTakenSeconds || 0) / 60)}m {(inspectedStudent.timeTakenSeconds || 0) % 60}s
                   </span>
                 </div>
-                <button onClick={() => setInspectedStudent(null)} className={`text-xs ${textMuted} hover:${textPrimary}`}>? Close</button>
+                <button onClick={() => setInspectedStudent(null)} className={`text-xs ${textMuted} hover:${textPrimary}`}>‚úï Close</button>
               </div>
 
               <div className={`flex gap-2 border-b pb-2 text-xs ${isLight ? 'border-slate-200' : 'border-slate-800'}`}>
@@ -1068,7 +1269,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                         <div>
                           <strong className={`block ${textPrimary}`}>{sec.sectionName}</strong>
                           <span className={`text-[11px] font-mono ${textMuted}`}>
-                            Correct: {sec.correct} ï Wrong: {sec.wrong} ï Skipped: {sec.skipped}
+                            Correct: {sec.correct} ‚Ä¢ Wrong: {sec.wrong} ‚Ä¢ Skipped: {sec.skipped}
                           </span>
                         </div>
                         <span className={`font-mono font-bold text-sm ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>
@@ -1087,7 +1288,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                   ) : (
                     inspectedStudent.violations.map((v, i) => (
                       <div key={i} className="text-red-600 bg-red-50 p-2 rounded border border-red-200">
-                        ï [{v.timestamp}] {v.message}
+                        ‚Ä¢ [{v.timestamp}] {v.message}
                       </div>
                     ))
                   )}
@@ -1177,7 +1378,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                     onClick={() => setShowSectionConfig(!showSectionConfig)}
                     className={`text-xs font-mono font-bold ${isLight ? 'text-blue-700 hover:text-blue-800' : 'text-cyan-400 hover:text-cyan-300'}`}
                   >
-                    {showSectionConfig ? 'Hide Rules ?' : 'Customize Penalties ?'}
+                    {showSectionConfig ? 'Hide Rules ‚ñ≤' : 'Customize Penalties ‚ñº'}
                   </button>
                 </div>
 
@@ -1432,7 +1633,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                   <button type="submit" className={`px-5 py-2.5 font-bold rounded-xl text-xs border transition ${
                     isLight ? 'bg-blue-700 hover:bg-blue-800 text-white border-blue-700 shadow-sm' : 'bg-slate-800 hover:bg-slate-700 text-white border-slate-700'
                   }`}>
-                    {editingQuestionIndex !== null ? `? Update Question #${editingQuestionIndex + 1}` : '+ Append Question to Assessment'}
+                    {editingQuestionIndex !== null ? `‚úì Update Question #${editingQuestionIndex + 1}` : '+ Append Question to Assessment'}
                   </button>
                 </div>
               </div>
@@ -1579,8 +1780,8 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
             </div>
 
             <div className={`p-3.5 rounded-xl border text-xs space-y-1 ${subCardCls}`}>
-              <div>ï Questions: <strong className={textPrimary}>{draftQuestions.length}</strong></div>
-              <div>ï Total Marks: <strong className="text-amber-600">{draftQuestions.reduce((sum, q) => sum + (q.marks || 10), 0)} pts</strong></div>
+              <div>‚Ä¢ Questions: <strong className={textPrimary}>{draftQuestions.length}</strong></div>
+              <div>‚Ä¢ Total Marks: <strong className="text-amber-600">{draftQuestions.reduce((sum, q) => sum + (q.marks || 10), 0)} pts</strong></div>
             </div>
 
             <button
@@ -1624,7 +1825,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                     <div>
                       <span className={`font-bold block truncate max-w-[190px] ${textPrimary}`}>{q.title}</span>
                       <span className={`text-[11px] block font-mono ${textMuted}`}>
-                        {q.questions.length}Q ï {q.questions.reduce((sum, item) => sum + (item.marks || 10), 0)} pts ï {Object.keys(q.participants || {}).length} attended
+                        {q.questions.length}Q ‚Ä¢ {q.questions.reduce((sum, item) => sum + (item.marks || 10), 0)} pts ‚Ä¢ {Object.keys(q.participants || {}).length} attended
                       </span>
                     </div>
 
