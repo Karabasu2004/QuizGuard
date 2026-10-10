@@ -8,7 +8,7 @@ export interface QuizSection {
   name: string;
   marksPerQuestion: number;
   negativeMarkingEnabled: boolean;
-  negativeMarking: number; // e.g. 1, 2
+  negativeMarking: number;
 }
 
 export interface Question {
@@ -17,7 +17,7 @@ export interface Question {
   type?: QuestionType;
   text: string;
   options?: string[];
-  correctAnswer: number | string | string[]; // string[] for multi_fib
+  correctAnswer: number | string | string[];
   timeLimit?: number;
   marks?: number;
   explanation?: string;
@@ -26,6 +26,24 @@ export interface Question {
 export interface Violation {
   timestamp: string;
   message: string;
+}
+
+export interface SectionSummary {
+  sectionId: string;
+  sectionName: string;
+  earnedMarks: number;
+  maxMarks: number;
+  correct: number;
+  wrong: number;
+  skipped: number;
+}
+
+export interface QuestionScoreDetail {
+  questionId: string;
+  earnedMarks: number;
+  maxMarks: number;
+  status: 'correct' | 'partial' | 'wrong' | 'skipped';
+  blankResults?: boolean[];
 }
 
 export interface StudentResult {
@@ -39,7 +57,11 @@ export interface StudentResult {
   answers?: Record<string, any>;
   reviewFlags?: Record<string, boolean>;
   submittedAt?: string;
-  sectionScores?: Record<string, number>;
+  sectionSummaries?: Record<string, SectionSummary>;
+  questionDetails?: Record<string, QuestionScoreDetail>;
+  totalCorrect?: number;
+  totalWrong?: number;
+  totalSkipped?: number;
 }
 
 export interface Quiz {

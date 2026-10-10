@@ -5,7 +5,7 @@ import { PieChart } from './PieChart';
 import { 
   Shield, Plus, Copy, Check, ExternalLink, LogOut, Trash2, Users, 
   Clock, Palette, CheckCircle2, Lock, Mail, User, RefreshCw, StopCircle, 
-  PlayCircle, Edit3, Award, Download, Layers, HelpCircle, AlertOctagon, Settings2
+  PlayCircle, Edit3, Award, Download, Layers, HelpCircle, AlertOctagon, Settings2, BarChart2
 } from 'lucide-react';
 
 interface HostProps {
@@ -39,7 +39,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [activeQuiz, setActiveQuiz] = useState<Quiz | null>(null);
 
-  // Assessment Settings
   const [quizMode, setQuizMode] = useState<QuizMode>('marks_challenge');
   const [newTitle, setNewTitle] = useState('');
   const [totalDurationMin, setTotalDurationMin] = useState<number>(20);
@@ -48,7 +47,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   const [sections, setSections] = useState<QuizSection[]>(DEFAULT_SECTIONS);
   const [showSectionConfig, setShowSectionConfig] = useState<boolean>(false);
 
-  // Question Builder States
   const [selectedSectionId, setSelectedSectionId] = useState<string>('sec_3m');
   const [qType, setQType] = useState<QuestionType>('mcq');
   const [qText, setQText] = useState('');
@@ -59,7 +57,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   const [correctOpt, setCorrectOpt] = useState<number>(0);
   const [singleFibAnswer, setSingleFibAnswer] = useState('');
   
-  // Multi-blank state
   const [blankCount, setBlankCount] = useState<number>(3);
   const [blankAnswers, setBlankAnswers] = useState<string[]>(['', '', '']);
   const [qExplanation, setQExplanation] = useState('');
@@ -69,6 +66,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   const [draftQuestions, setDraftQuestions] = useState<Question[]>([]);
   const [copied, setCopied] = useState(false);
   const [inspectedStudent, setInspectedStudent] = useState<StudentResult | null>(null);
+  const [inspectTab, setInspectTab] = useState<'audit' | 'sections'>('sections');
 
   const refreshCaptcha = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -103,7 +101,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     setBlankAnswers(updated);
   };
 
-  // Section Negative Marking Configuration Handlers
   const handleToggleNegativeMarking = (secId: string) => {
     setSections(sections.map(s => s.id === secId ? { ...s, negativeMarkingEnabled: !s.negativeMarkingEnabled } : s));
   };
@@ -112,7 +109,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     setSections(sections.map(s => s.id === secId ? { ...s, negativeMarking: Math.max(0, val) } : s));
   };
 
-  // Real-time Cloud Sync
   useEffect(() => {
     if (!activeQuiz || !supabase) return;
 
@@ -140,6 +136,12 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               status: p.status || 'Active',
               violations: Array.isArray(vList) ? vList : [],
               answers: p.answers || {},
+              reviewFlags: p.review_flags || {},
+              sectionSummaries: p.section_summaries || {},
+              questionDetails: p.question_details || {},
+              totalCorrect: p.total_correct || 0,
+              totalWrong: p.total_wrong || 0,
+              totalSkipped: p.total_skipped || 0,
               submittedAt: p.updated_at
             };
           });
@@ -341,7 +343,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
 
   const handleStopAssessment = async () => {
     if (!activeQuiz) return;
-    if (!window.confirm('Are you sure you want to pause/stop this assessment? All connected participants will be halted.')) {
+    if (!window.confirm('Are you sure you want to stop this assessment? All connected participants will be halted.')) {
       return;
     }
 
@@ -412,6 +414,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     }
   };
 
+  // Stage 5 Enhanced CSV Export (Includes Section Scores, Accurate Rank, and Time Taken)
   const exportResultsCSV = () => {
     if (!activeQuiz) return;
     const participants = Object.values(activeQuiz.participants || {});
@@ -421,7 +424,8 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     }
 
     let csvContent = 'data:text/csv;charset=utf-8,';
-    csvContent += 'Rank,Team Name,Score,Time Taken (sec),Status,Strikes,Submission Date\n';
+    const sectionHeaders = (activeQuiz.sections || []).map(s => `"${s.name} Marks"`).join(',');
+    csvContent += `Rank,Team Name,Total Score,Time Taken (sec),Correct Count,Wrong Count,Skipped Count,Status,Strikes,${sectionHeaders ? sectionHeaders + ',' : ''}Submission Date\n`;
 
     const sorted = [...participants].sort((a, b) => {
       const aDisq = a.status === 'Disqualified';
@@ -433,13 +437,22 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     });
 
     sorted.forEach((p, index) => {
+      const secVals = (activeQuiz.sections || []).map(s => {
+        const secSum = p.sectionSummaries?.[s.id];
+        return secSum ? Math.max(0, secSum.earnedMarks).toFixed(1) : '0';
+      }).join(',');
+
       const row = [
         index + 1,
         `"${p.name.replace(/"/g, '""')}"`,
         p.score,
         p.timeTakenSeconds || 0,
+        p.totalCorrect || 0,
+        p.totalWrong || 0,
+        p.totalSkipped || 0,
         p.status,
         p.strikes,
+        secVals ? secVals + ',' : '',
         p.submittedAt ? `"${p.submittedAt}"` : 'N/A'
       ];
       csvContent += row.join(',') + '\n';
@@ -448,7 +461,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `${activeQuiz.title.replace(/\s+/g, '_')}_Results.csv`);
+    link.setAttribute('download', `${activeQuiz.title.replace(/\s+/g, '_')}_Leaderboard_Results.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -628,6 +641,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   }
 
   if (activeQuiz) {
+    // Stage 5 Hardened Tie-Breaking Sort (Score DESC, then Time Taken ASC)
     const participantsList = Object.values(activeQuiz.participants || {}).sort((a, b) => {
       const aDisq = a.status === 'Disqualified';
       const bDisq = b.status === 'Disqualified';
@@ -775,12 +789,13 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           <PieChart title="Score Distribution Brackets" data={scoreChartData} />
         </div>
 
+        {/* Stage 5 Tie-Breaking Leaderboard */}
         <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-4">
           <div className="flex justify-between items-center">
             <h3 className="text-lg font-bold text-white flex items-center gap-2">
-              <Users className="w-5 h-5 text-cyan-400" /> Leaderboard & Audit ({participantsList.length})
+              <Trophy className="w-5 h-5 text-amber-400" /> Live Examination Leaderboard ({participantsList.length})
             </h3>
-            <span className="text-xs font-mono text-slate-400">Ranked by Score • Tie-break: Time Taken</span>
+            <span className="text-xs font-mono text-slate-400">Ranked by Score • Tie-breaker: Time Taken</span>
           </div>
 
           <div className="overflow-x-auto rounded-2xl border border-slate-800">
@@ -791,53 +806,65 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                   <th className="py-3 px-4">Team Name</th>
                   <th className="py-3 px-4">Score</th>
                   <th className="py-3 px-4">Time Taken</th>
+                  <th className="py-3 px-4">Performance</th>
                   <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4">Strikes</th>
                   <th className="py-3 px-4 text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
-                {participantsList.map((s, idx) => (
-                  <tr key={s.id} className="hover:bg-slate-800/20 transition">
-                    <td className="py-3 px-4 font-mono font-bold text-cyan-400">#{idx + 1}</td>
-                    <td className="py-3 px-4 font-semibold text-white">{s.name}</td>
-                    <td className="py-3 px-4 font-mono font-bold text-cyan-400">
-                      {s.score} / {totalMax} pts
-                    </td>
-                    <td className="py-3 px-4 font-mono text-xs text-slate-300">
-                      {s.timeTakenSeconds ? `${Math.floor(s.timeTakenSeconds / 60)}m ${s.timeTakenSeconds % 60}s` : 'N/A'}
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                        s.status === 'Disqualified'
-                          ? 'bg-red-500/10 text-red-400 border border-red-500/30'
-                          : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
-                      }`}>
-                        {s.status}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className={`font-mono font-bold px-2 py-0.5 rounded text-xs ${
-                        s.strikes === 0 ? 'bg-slate-800 text-slate-400' :
-                        s.strikes >= 3 ? 'bg-red-500/20 text-red-400 border border-red-500/40' :
-                        'bg-amber-500/20 text-amber-400'
-                      }`}>
-                        {s.strikes}/3 Strikes
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <button 
-                        onClick={() => setInspectedStudent(s)}
-                        className="px-3 py-1 bg-slate-800 hover:bg-cyan-600/30 text-cyan-300 text-xs font-medium rounded-lg border border-slate-700 transition"
-                      >
-                        Inspect Log
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {participantsList.map((s, idx) => {
+                  let rankBadge = `#${idx + 1}`;
+                  if (idx === 0 && s.status !== 'Disqualified') rankBadge = '?? 1st';
+                  else if (idx === 1 && s.status !== 'Disqualified') rankBadge = '?? 2nd';
+                  else if (idx === 2 && s.status !== 'Disqualified') rankBadge = '?? 3rd';
+
+                  return (
+                    <tr key={s.id} className="hover:bg-slate-800/20 transition">
+                      <td className="py-3 px-4 font-mono font-bold text-cyan-400">{rankBadge}</td>
+                      <td className="py-3 px-4 font-semibold text-white">{s.name}</td>
+                      <td className="py-3 px-4 font-mono font-bold text-cyan-400">
+                        {s.score} / {totalMax} pts
+                      </td>
+                      <td className="py-3 px-4 font-mono text-xs text-slate-300">
+                        {s.timeTakenSeconds ? `${Math.floor(s.timeTakenSeconds / 60)}m ${s.timeTakenSeconds % 60}s` : 'N/A'}
+                      </td>
+                      <td className="py-3 px-4 font-mono text-xs">
+                        <span className="text-emerald-400 font-bold">{s.totalCorrect || 0}?</span>{' '}
+                        <span className="text-rose-400 font-bold">{s.totalWrong || 0}?</span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                          s.status === 'Disqualified'
+                            ? 'bg-red-500/10 text-red-400 border border-red-500/30'
+                            : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                        }`}>
+                          {s.status}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`font-mono font-bold px-2 py-0.5 rounded text-xs ${
+                          s.strikes === 0 ? 'bg-slate-800 text-slate-400' :
+                          s.strikes >= 3 ? 'bg-red-500/20 text-red-400 border border-red-500/40' :
+                          'bg-amber-500/20 text-amber-400'
+                        }`}>
+                          {s.strikes}/3 Strikes
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button 
+                          onClick={() => { setInspectedStudent(s); setInspectTab('sections'); }}
+                          className="px-3 py-1 bg-slate-800 hover:bg-cyan-600/30 text-cyan-300 text-xs font-medium rounded-lg border border-slate-700 transition"
+                        >
+                          Inspect Log
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {participantsList.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="py-10 text-center text-slate-500 text-xs font-mono">
+                    <td colSpan={8} className="py-10 text-center text-slate-500 text-xs font-mono">
                       No candidate submissions yet. Share the invitation link above with participants.
                     </td>
                   </tr>
@@ -847,24 +874,69 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           </div>
         </div>
 
+        {/* Stage 5 Enhanced Inspect Candidate Modal */}
         {inspectedStudent && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-            <div className="max-w-lg w-full bg-slate-900 border border-slate-800 p-6 rounded-3xl space-y-4 shadow-2xl">
+            <div className="max-w-xl w-full bg-slate-900 border border-slate-800 p-6 rounded-3xl space-y-4 shadow-2xl">
               <div className="flex justify-between items-center">
-                <h3 className="text-lg font-bold text-white">Integrity Audit: {inspectedStudent.name}</h3>
+                <div>
+                  <h3 className="text-lg font-bold text-white">Candidate Audit: {inspectedStudent.name}</h3>
+                  <span className="text-xs text-slate-400 font-mono">
+                    Score: {inspectedStudent.score}/{totalMax} pts • Time: {Math.floor((inspectedStudent.timeTakenSeconds || 0) / 60)}m {(inspectedStudent.timeTakenSeconds || 0) % 60}s
+                  </span>
+                </div>
                 <button onClick={() => setInspectedStudent(null)} className="text-slate-400 hover:text-white text-xs">? Close</button>
               </div>
-              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 max-h-60 overflow-y-auto space-y-2 text-xs font-mono">
-                {inspectedStudent.violations.length === 0 ? (
-                  <p className="text-emerald-400">Zero violations recorded. Clean session.</p>
-                ) : (
-                  inspectedStudent.violations.map((v, i) => (
-                    <div key={i} className="text-red-400 bg-red-950/20 p-2 rounded border border-red-500/20">
-                      • [{v.timestamp}] {v.message}
-                    </div>
-                  ))
-                )}
+
+              {/* Inspect Modal Tabs */}
+              <div className="flex gap-2 border-b border-slate-800 pb-2 text-xs">
+                <button
+                  onClick={() => setInspectTab('sections')}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition ${inspectTab === 'sections' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                >
+                  Sectional Breakdown
+                </button>
+                <button
+                  onClick={() => setInspectTab('audit')}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition ${inspectTab === 'audit' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                >
+                  Proctor Strikes ({inspectedStudent.violations.length})
+                </button>
               </div>
+
+              {inspectTab === 'sections' ? (
+                <div className="space-y-2 max-h-72 overflow-y-auto">
+                  {inspectedStudent.sectionSummaries && Object.keys(inspectedStudent.sectionSummaries).length > 0 ? (
+                    Object.values(inspectedStudent.sectionSummaries).map((sec) => (
+                      <div key={sec.sectionId} className="p-3 bg-slate-950 rounded-xl border border-slate-800 flex justify-between items-center text-xs">
+                        <div>
+                          <strong className="text-white block">{sec.sectionName}</strong>
+                          <span className="text-slate-400 text-[11px] font-mono">
+                            Correct: {sec.correct} • Wrong: {sec.wrong} • Skipped: {sec.skipped}
+                          </span>
+                        </div>
+                        <span className="text-cyan-400 font-mono font-bold text-sm">
+                          {Math.max(0, sec.earnedMarks).toFixed(1)} / {sec.maxMarks} pts
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-slate-500 text-xs font-mono py-4 text-center">No detailed section breakdown recorded for this submission.</p>
+                  )}
+                </div>
+              ) : (
+                <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 max-h-60 overflow-y-auto space-y-2 text-xs font-mono">
+                  {inspectedStudent.violations.length === 0 ? (
+                    <p className="text-emerald-400">Zero violations recorded. 100% clean session.</p>
+                  ) : (
+                    inspectedStudent.violations.map((v, i) => (
+                      <div key={i} className="text-red-400 bg-red-950/20 p-2 rounded border border-red-500/20">
+                        • [{v.timestamp}] {v.message}
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -887,7 +959,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-5">
-            {/* Mode Switcher */}
             <div className="bg-slate-950 p-2 rounded-2xl border border-slate-800 flex flex-wrap gap-2">
               <button
                 type="button"
@@ -913,7 +984,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               </button>
             </div>
 
-            {/* Stage 4 Section Negative Marking Configuration Accordion */}
             {quizMode === 'marks_challenge' && (
               <div className="p-4 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-3">
                 <div className="flex justify-between items-center">
@@ -969,7 +1039,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               </div>
             )}
 
-            {/* Target Section Chooser */}
             {quizMode === 'marks_challenge' && (
               <div className="space-y-2">
                 <label className="text-xs text-slate-400 font-medium block flex items-center gap-1.5">
@@ -998,7 +1067,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               </div>
             )}
 
-            {/* Question Format Selector */}
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
               <h2 className="text-sm font-bold text-white flex items-center gap-2">
                 <Plus className="text-cyan-400 w-4 h-4" /> Add Question Content
@@ -1101,7 +1169,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                 </div>
               )}
 
-              {/* Stage 4 Multi-Blank Builder with Partial Mark Preview */}
               {qType === 'multi_fib' && (
                 <div className="space-y-3 bg-slate-950/60 p-4 rounded-2xl border border-slate-800">
                   <div className="flex items-center justify-between">
@@ -1152,7 +1219,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                   placeholder="e.g. PBFT uses pre-prepare, prepare, and commit phases."
                   value={qExplanation}
                   onChange={(e) => setQExplanation(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800/80 border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800/80 border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-500"
                 />
               </div>
 

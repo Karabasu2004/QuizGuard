@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Quiz, Question, QuizSection, ThemeColor } from '../types';
+import { Quiz, Question, QuizSection, ThemeColor, SectionSummary, QuestionScoreDetail } from '../types';
 import { getSavedQuiz, applyGlobalTheme, subscribeToMessages, supabase } from '../supabase';
 import { 
   ShieldAlert, CheckCircle, AlertTriangle, Maximize, Clock, Trophy, 
   AlertOctagon, Edit3, Award, Bookmark, Flag, ArrowRight, ArrowLeft, 
-  RotateCcw, Check, Layers, Loader2, Menu, X, CheckCircle2, AlertCircle
+  RotateCcw, Check, Layers, Loader2, Menu, X, CheckCircle2, AlertCircle,
+  HelpCircle, Target, BarChart3, Filter
 } from 'lucide-react';
 
 interface StudentPortalProps {
@@ -80,6 +81,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
   const [isPaletteOpenMobile, setIsPaletteOpenMobile] = useState<boolean>(false);
   const [activeSectionFilter, setActiveSectionFilter] = useState<string>('all');
+  const [reviewFilter, setReviewFilter] = useState<'all' | 'correct' | 'wrong' | 'skipped'>('all');
   
   const [answers, setAnswers] = useState<Record<string, any>>(() => {
     if (!resolvedQuizId) return {};
@@ -140,6 +142,11 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
   const [score, setScore] = useState<number>(0);
   const [timeTaken, setTimeTaken] = useState<number>(0);
   const [showSubmitModal, setShowSubmitModal] = useState<boolean>(false);
+
+  // Stage 5 Result Breakdown States
+  const [sectionSummaries, setSectionSummaries] = useState<Record<string, SectionSummary>>({});
+  const [questionDetails, setQuestionDetails] = useState<Record<string, QuestionScoreDetail>>({});
+  const [overallStats, setOverallStats] = useState<{ correct: number; wrong: number; skipped: number }>({ correct: 0, wrong: 0, skipped: 0 });
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -210,6 +217,8 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
             setIsJoined(true);
             setScore(pData.score || 0);
             setTimeTaken(pData.time_taken || 0);
+            if (pData.section_summaries) setSectionSummaries(pData.section_summaries);
+            if (pData.question_details) setQuestionDetails(pData.question_details);
           }
         }
       } catch (e) {}
@@ -312,6 +321,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
     computeTime();
     const interval = setInterval(computeTime, 1000);
+
     return () => clearInterval(interval);
   }, [isJoined, isFinished, disqualified, isAssessmentStopped, startedAtTimestamp, totalDurationSec]);
 
@@ -421,13 +431,32 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     }
   };
 
-  // Stage 4 Partial & Negative Marking Engine
+  // Stage 5 Evaluation Engine & Section Score Breakdown
   const handleSubmit = async (forced = false) => {
     if (!quiz || isAssessmentStopped) return;
     setShowSubmitModal(false);
 
     let totalScore = 0;
+    let totalCorrectCount = 0;
+    let totalWrongCount = 0;
+    let totalSkippedCount = 0;
+
     const sectionMap = new Map((quiz.sections || []).map((s) => [s.id, s]));
+    const calculatedSummaries: Record<string, SectionSummary> = {};
+    const calculatedDetails: Record<string, QuestionScoreDetail> = {};
+
+    // Initialize section summaries
+    (quiz.sections || []).forEach((sec) => {
+      calculatedSummaries[sec.id] = {
+        sectionId: sec.id,
+        sectionName: sec.name,
+        earnedMarks: 0,
+        maxMarks: 0,
+        correct: 0,
+        wrong: 0,
+        skipped: 0
+      };
+    });
 
     quiz.questions.forEach((q) => {
       const qSection = q.sectionId ? sectionMap.get(q.sectionId) : undefined;
@@ -435,6 +464,15 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
       const penalty = isNegativeEnabled ? (qSection?.negativeMarking || 0) : 0;
       const qMarks = q.marks !== undefined ? Number(q.marks) : 10;
       const userAns = answers[q.id];
+
+      const secSummary = q.sectionId ? calculatedSummaries[q.sectionId] : undefined;
+      if (secSummary) {
+        secSummary.maxMarks += qMarks;
+      }
+
+      let qEarned = 0;
+      let qStatus: 'correct' | 'partial' | 'wrong' | 'skipped' = 'skipped';
+      let blankFlags: boolean[] | undefined = undefined;
 
       if (q.type === 'multi_fib') {
         const correctList = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
@@ -444,20 +482,35 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
         let blanksMatched = 0;
         let attempted = false;
+        blankFlags = [];
 
         correctList.forEach((corr, bIdx) => {
           const sVal = String(studentList[bIdx] || '').trim().toLowerCase();
           if (sVal.length > 0) attempted = true;
-          if (sVal === String(corr).trim().toLowerCase()) {
-            blanksMatched++;
-          }
+          const isMatched = sVal === String(corr).trim().toLowerCase();
+          blankFlags!.push(isMatched);
+          if (isMatched) blanksMatched++;
         });
 
-        // Partial marks awarded for correct blanks
-        if (blanksMatched > 0) {
-          totalScore += blanksMatched * markPerBlank;
-        } else if (attempted && penalty > 0) {
-          totalScore -= penalty;
+        if (blanksMatched === blanksCount) {
+          qEarned = qMarks;
+          qStatus = 'correct';
+          totalCorrectCount++;
+          if (secSummary) secSummary.correct++;
+        } else if (blanksMatched > 0) {
+          qEarned = Number((blanksMatched * markPerBlank).toFixed(2));
+          qStatus = 'partial';
+          totalCorrectCount++;
+          if (secSummary) secSummary.correct++;
+        } else if (attempted) {
+          qEarned = penalty > 0 ? -penalty : 0;
+          qStatus = 'wrong';
+          totalWrongCount++;
+          if (secSummary) secSummary.wrong++;
+        } else {
+          qStatus = 'skipped';
+          totalSkippedCount++;
+          if (secSummary) secSummary.skipped++;
         }
       } else if (q.type === 'fib') {
         const studentText = String(userAns || '').trim().toLowerCase();
@@ -465,25 +518,61 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
         if (studentText.length > 0) {
           if (studentText === expectedText) {
-            totalScore += qMarks;
-          } else if (penalty > 0) {
-            totalScore -= penalty;
+            qEarned = qMarks;
+            qStatus = 'correct';
+            totalCorrectCount++;
+            if (secSummary) secSummary.correct++;
+          } else {
+            qEarned = penalty > 0 ? -penalty : 0;
+            qStatus = 'wrong';
+            totalWrongCount++;
+            if (secSummary) secSummary.wrong++;
           }
+        } else {
+          qStatus = 'skipped';
+          totalSkippedCount++;
+          if (secSummary) secSummary.skipped++;
         }
       } else {
         // MCQ
         if (userAns !== undefined && userAns !== null) {
           if (Number(userAns) === Number(q.correctAnswer)) {
-            totalScore += qMarks;
-          } else if (penalty > 0) {
-            totalScore -= penalty;
+            qEarned = qMarks;
+            qStatus = 'correct';
+            totalCorrectCount++;
+            if (secSummary) secSummary.correct++;
+          } else {
+            qEarned = penalty > 0 ? -penalty : 0;
+            qStatus = 'wrong';
+            totalWrongCount++;
+            if (secSummary) secSummary.wrong++;
           }
+        } else {
+          qStatus = 'skipped';
+          totalSkippedCount++;
+          if (secSummary) secSummary.skipped++;
         }
       }
+
+      totalScore += qEarned;
+      if (secSummary) {
+        secSummary.earnedMarks += qEarned;
+      }
+
+      calculatedDetails[q.id] = {
+        questionId: q.id,
+        earnedMarks: qEarned,
+        maxMarks: qMarks,
+        status: qStatus,
+        blankResults: blankFlags
+      };
     });
 
     const finalScore = Math.max(0, Number(totalScore.toFixed(2)));
     setScore(finalScore);
+    setSectionSummaries(calculatedSummaries);
+    setQuestionDetails(calculatedDetails);
+    setOverallStats({ correct: totalCorrectCount, wrong: totalWrongCount, skipped: totalSkippedCount });
     setIsFinished(true);
     setIsAutoSubmitting(false);
 
@@ -499,6 +588,11 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
         violations: violations,
         answers: answers,
         review_flags: reviewFlags,
+        section_summaries: calculatedSummaries,
+        question_details: calculatedDetails,
+        total_correct: totalCorrectCount,
+        total_wrong: totalWrongCount,
+        total_skipped: totalSkippedCount,
         updated_at: new Date().toISOString()
       });
     }
@@ -556,60 +650,221 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     );
   }
 
+  // Stage 5 Comprehensive Scorecard, Section Breakdown & Filterable Answer Review
   if (isFinished) {
     const totalMax = quiz.questions.reduce((sum, q) => sum + (q.marks || 10), 0);
+    const percentage = totalMax > 0 ? ((score / totalMax) * 100).toFixed(1) : '0';
+
+    const filteredQuestions = quiz.questions.filter((q) => {
+      const detail = questionDetails[q.id];
+      if (reviewFilter === 'all') return true;
+      if (reviewFilter === 'correct') return detail?.status === 'correct' || detail?.status === 'partial';
+      if (reviewFilter === 'wrong') return detail?.status === 'wrong';
+      if (reviewFilter === 'skipped') return detail?.status === 'skipped';
+      return true;
+    });
 
     return (
-      <div className="max-w-3xl mx-auto my-8 space-y-8">
-        <div className="p-8 bg-slate-900 border border-slate-800 rounded-3xl text-center shadow-2xl space-y-4">
-          <Trophy className="w-16 h-16 text-amber-400 mx-auto" />
-          <h2 className="text-2xl font-bold text-white">Assessment Submitted Successfully!</h2>
-          <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800 inline-block px-10">
-            <span className="text-xs uppercase font-mono tracking-wider text-slate-400 block mb-1">Your Total Score</span>
-            <span className="text-4xl font-black text-cyan-400">{score} / {totalMax} pts</span>
-            <span className="text-xs text-slate-400 block mt-2">
-              Time Taken: {Math.floor(timeTaken / 60)}m {timeTaken % 60}s
-            </span>
+      <div className="max-w-4xl mx-auto my-8 space-y-8 animate-fade-in">
+        {/* Top Score Banner */}
+        <div className="p-8 bg-slate-900 border border-slate-800 rounded-3xl text-center shadow-2xl space-y-6">
+          <div className="inline-block p-4 bg-amber-500/10 rounded-3xl border border-amber-500/20">
+            <Trophy className="w-14 h-14 text-amber-400" />
+          </div>
+          <div>
+            <h2 className="text-2xl sm:text-3xl font-black text-white">Assessment Submitted</h2>
+            <p className="text-slate-400 text-xs mt-1 font-mono">Team: <strong className="text-cyan-300">{name}</strong> • Time Taken: {Math.floor(timeTaken / 60)}m {timeTaken % 60}s</p>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-2xl mx-auto">
+            <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 text-center">
+              <span className="text-[10px] uppercase font-mono text-slate-400 block mb-1">Final Score</span>
+              <span className="text-2xl sm:text-3xl font-black text-cyan-400">{score}</span>
+              <span className="text-xs text-slate-500 block">/ {totalMax} pts</span>
+            </div>
+            <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 text-center">
+              <span className="text-[10px] uppercase font-mono text-slate-400 block mb-1">Percentage</span>
+              <span className="text-2xl sm:text-3xl font-black text-purple-400">{percentage}%</span>
+              <span className="text-xs text-slate-500 block">Marks Share</span>
+            </div>
+            <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 text-center">
+              <span className="text-[10px] uppercase font-mono text-slate-400 block mb-1">Correct / Partial</span>
+              <span className="text-2xl sm:text-3xl font-black text-emerald-400">{overallStats.correct}</span>
+              <span className="text-xs text-slate-500 block">Questions</span>
+            </div>
+            <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 text-center">
+              <span className="text-[10px] uppercase font-mono text-slate-400 block mb-1">Penalized / Skipped</span>
+              <span className="text-2xl sm:text-3xl font-black text-rose-400">{overallStats.wrong}</span>
+              <span className="text-xs text-slate-500 block">/ {overallStats.skipped} skipped</span>
+            </div>
           </div>
         </div>
 
-        <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-4">
-          <h3 className="text-lg font-bold text-white flex items-center gap-2">
-            <CheckCircle className="w-5 h-5 text-emerald-400" /> Detailed Answer Key & Review
-          </h3>
+        {/* Sectional Performance Grid */}
+        {Object.keys(sectionSummaries).length > 0 && (
+          <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-4 shadow-xl">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-cyan-400" /> Section-Wise Score Breakdown
+            </h3>
 
-          <div className="space-y-4">
-            {quiz.questions.map((q, idx) => {
-              const userAns = answers[q.id];
-              return (
-                <div key={q.id} className="p-4 bg-slate-950 rounded-2xl border border-slate-800 space-y-2 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {Object.values(sectionSummaries).map((sec) => (
+                <div key={sec.sectionId} className="p-4 bg-slate-950 rounded-2xl border border-slate-800 space-y-2">
                   <div className="flex justify-between items-center">
-                    <span className="font-mono text-cyan-400 font-bold">Q{idx + 1} ({q.marks} Marks)</span>
-                    <span className="uppercase text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">
-                      {q.type}
+                    <span className="text-xs font-bold text-white">{sec.sectionName}</span>
+                    <span className="text-xs font-mono font-bold text-cyan-400">
+                      {Math.max(0, sec.earnedMarks).toFixed(1)} / {sec.maxMarks}
                     </span>
                   </div>
-                  <p className="text-white text-sm font-semibold">{q.text}</p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 font-mono">
-                    <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
-                      <span className="text-slate-400 block mb-0.5">Your Response:</span>
-                      <span className="text-amber-300 font-bold">
-                        {userAns !== undefined ? (Array.isArray(userAns) ? userAns.join(', ') : (q.type === 'mcq' ? q.options?.[userAns] : String(userAns))) : 'Skipped'}
-                      </span>
+                  <div className="grid grid-cols-3 gap-1 pt-1 text-[11px] font-mono text-center">
+                    <div className="p-1 rounded bg-emerald-950/40 text-emerald-300 border border-emerald-900/40">
+                      ? {sec.correct}
                     </div>
-
-                    <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
-                      <span className="text-slate-400 block mb-0.5">Correct Answer:</span>
-                      <span className="text-emerald-400 font-bold">
-                        {Array.isArray(q.correctAnswer) ? q.correctAnswer.join(', ') : (q.type === 'mcq' ? q.options?.[Number(q.correctAnswer)] : String(q.correctAnswer))}
-                      </span>
+                    <div className="p-1 rounded bg-rose-950/40 text-rose-300 border border-rose-900/40">
+                      ? {sec.wrong}
+                    </div>
+                    <div className="p-1 rounded bg-slate-900 text-slate-400 border border-slate-800">
+                      — {sec.skipped}
                     </div>
                   </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Detailed Question-by-Question Review with Explanations */}
+        <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-5 shadow-xl">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <CheckCircle className="w-5 h-5 text-emerald-400" /> Question-by-Question Answer Review
+            </h3>
+
+            {/* Filter Pills */}
+            <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+              <button
+                onClick={() => setReviewFilter('all')}
+                className={`px-3 py-1 rounded-lg font-bold transition ${
+                  reviewFilter === 'all' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                All ({quiz.questions.length})
+              </button>
+              <button
+                onClick={() => setReviewFilter('correct')}
+                className={`px-3 py-1 rounded-lg font-bold transition ${
+                  reviewFilter === 'correct' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Correct ({overallStats.correct})
+              </button>
+              <button
+                onClick={() => setReviewFilter('wrong')}
+                className={`px-3 py-1 rounded-lg font-bold transition ${
+                  reviewFilter === 'wrong' ? 'bg-rose-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Penalized ({overallStats.wrong})
+              </button>
+              <button
+                onClick={() => setReviewFilter('skipped')}
+                className={`px-3 py-1 rounded-lg font-bold transition ${
+                  reviewFilter === 'skipped' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Skipped ({overallStats.skipped})
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {filteredQuestions.map((q) => {
+              const originalIndex = quiz.questions.findIndex((item) => item.id === q.id);
+              const userAns = answers[q.id];
+              const detail = questionDetails[q.id];
+              const sec = quiz.sections?.find((s) => s.id === q.sectionId);
+
+              let statusBadge = 'bg-slate-800 text-slate-400 border-slate-700';
+              let statusLabel = 'Skipped';
+
+              if (detail?.status === 'correct') {
+                statusBadge = 'bg-emerald-950/60 text-emerald-400 border-emerald-800';
+                statusLabel = `Correct (+${detail.earnedMarks} pts)`;
+              } else if (detail?.status === 'partial') {
+                statusBadge = 'bg-cyan-950/60 text-cyan-300 border-cyan-800';
+                statusLabel = `Partial (+${detail.earnedMarks} / ${detail.maxMarks} pts)`;
+              } else if (detail?.status === 'wrong') {
+                statusBadge = 'bg-rose-950/60 text-rose-400 border-rose-800';
+                statusLabel = `Incorrect (${detail.earnedMarks} pts)`;
+              }
+
+              return (
+                <div key={q.id} className="p-5 bg-slate-950 rounded-2xl border border-slate-800 space-y-3 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-cyan-400 font-bold">Q{originalIndex + 1}</span>
+                      {sec && (
+                        <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-slate-900 text-slate-300 border border-slate-800">
+                          {sec.name}
+                        </span>
+                      )}
+                      <span className="uppercase text-[10px] px-2 py-0.5 rounded bg-slate-900 text-slate-400 font-mono">
+                        {q.type}
+                      </span>
+                    </div>
+
+                    <span className={`px-2.5 py-1 rounded-full text-xs font-mono font-bold border ${statusBadge}`}>
+                      {statusLabel}
+                    </span>
+                  </div>
+
+                  <p className="text-white text-sm font-semibold leading-relaxed">{q.text}</p>
+
+                  {/* Multi-blank detailed per-blank breakdown */}
+                  {q.type === 'multi_fib' && Array.isArray(q.correctAnswer) ? (
+                    <div className="space-y-2 pt-1 font-mono">
+                      <span className="text-slate-400 text-[11px] block font-bold">Multi-Blank Evaluation:</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {q.correctAnswer.map((corr, bIdx) => {
+                          const sVal = Array.isArray(userAns) ? userAns[bIdx] : '';
+                          const isCorrect = detail?.blankResults ? detail.blankResults[bIdx] : false;
+                          return (
+                            <div key={bIdx} className={`p-2.5 rounded-xl border ${isCorrect ? 'bg-emerald-950/20 border-emerald-900/40 text-emerald-300' : 'bg-slate-900 border-slate-800 text-slate-300'}`}>
+                              <div className="flex justify-between items-center text-[11px] mb-1">
+                                <span className="font-bold text-slate-400">Blank {bIdx + 1}:</span>
+                                <span>{isCorrect ? '? Correct' : '? Incorrect / Blank'}</span>
+                              </div>
+                              <div className="text-[11px]">Your Entry: <strong className={isCorrect ? 'text-emerald-400' : 'text-rose-400'}>{sVal || '—'}</strong></div>
+                              <div className="text-[11px] text-slate-400">Answer Key: <strong className="text-emerald-400">{corr}</strong></div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 font-mono">
+                      <div className="bg-slate-900 p-3 rounded-xl border border-slate-800">
+                        <span className="text-slate-400 text-[11px] block mb-0.5">Your Response:</span>
+                        <span className={detail?.status === 'correct' ? 'text-emerald-400 font-bold' : detail?.status === 'wrong' ? 'text-rose-400 font-bold' : 'text-slate-400 font-bold'}>
+                          {userAns !== undefined ? (q.type === 'mcq' ? q.options?.[userAns] : String(userAns)) : 'Skipped (No entry)'}
+                        </span>
+                      </div>
+
+                      <div className="bg-slate-900 p-3 rounded-xl border border-slate-800">
+                        <span className="text-slate-400 text-[11px] block mb-0.5">Correct Answer Key:</span>
+                        <span className="text-emerald-400 font-bold">
+                          {q.type === 'mcq' ? q.options?.[Number(q.correctAnswer)] : String(q.correctAnswer)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                   {q.explanation && (
-                    <div className="text-slate-300 bg-slate-900/40 p-2.5 rounded-xl border border-slate-800/60 text-[11px] leading-relaxed">
-                      ?? <strong>Explanation:</strong> {q.explanation}
+                    <div className="text-slate-300 bg-slate-900/60 p-3 rounded-xl border border-slate-800 text-xs leading-relaxed flex items-start gap-2">
+                      <HelpCircle className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+                      <div>
+                        <strong className="text-cyan-300">Explanation:</strong> {q.explanation}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -686,7 +941,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     return 'not_visited';
   };
 
-  // Detailed Metrics for Pre-Submit Modal
   const answeredQuestions = quiz.questions.filter(isQuestionAnswered);
   const answeredCount = answeredQuestions.length;
   const unansweredCount = quiz.questions.length - answeredCount;
@@ -717,7 +971,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
   return (
     <div className="max-w-7xl mx-auto my-4 space-y-5 relative">
-      {/* Auto-Submit Fullscreen Overlay */}
       {isAutoSubmitting && (
         <div className="fixed inset-0 bg-black/90 z-50 flex flex-col items-center justify-center p-6 text-center">
           <div className="p-4 bg-rose-500/10 rounded-3xl border border-rose-500/30 mb-4 animate-bounce">
@@ -733,7 +986,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
         </div>
       )}
 
-      {/* Top CBT Status Bar */}
+      {/* Top Status Bar */}
       <div className="flex flex-wrap items-center justify-between bg-slate-900 border border-slate-800 p-4 rounded-3xl gap-4">
         <div>
           <h2 className="text-base font-bold text-white">{quiz.title}</h2>
@@ -741,7 +994,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
         </div>
 
         <div className="flex items-center gap-3 sm:gap-4">
-          {/* Server-Anchored Timer */}
           <div className={`flex items-center gap-2 px-4 py-2 rounded-2xl border font-mono text-sm font-bold transition-colors ${
             isTimerCritical 
               ? 'bg-rose-500/20 border-rose-500 text-rose-400 animate-pulse ring-2 ring-rose-500/30' 
@@ -820,7 +1072,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Interactive Question Canvas */}
         <div className="lg:col-span-2 space-y-5">
           <div className="bg-slate-900 border border-slate-800 p-6 sm:p-8 rounded-3xl shadow-xl space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
@@ -846,7 +1097,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
               <button
                 onClick={() => handleClearResponse(currentQ.id)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-rose-950/40 border border-slate-700 hover:border-rose-500/40 text-slate-400 hover:text-rose-300 transition"
-                title="Clear entered answer for this question"
               >
                 <RotateCcw className="w-3.5 h-3.5" /> Clear Response
               </button>
@@ -854,7 +1104,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
             <h2 className="text-lg font-semibold text-white leading-relaxed">{currentQ.text}</h2>
 
-            {/* Stage 4 Multi-Blank Question Layout */}
             {currentQ.type === 'multi_fib' ? (
               <div className="space-y-4 bg-slate-950 p-5 rounded-2xl border border-slate-800">
                 <div className="flex justify-between items-center text-xs">
@@ -917,7 +1166,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
               </div>
             )}
 
-            {/* CBT Action Toolbar */}
             <div className="flex flex-wrap items-center justify-between gap-3 pt-5 border-t border-slate-800">
               <div className="flex items-center gap-2">
                 <button
@@ -960,7 +1208,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
               <Bookmark className="w-4 h-4 text-cyan-400" /> Question Palette
             </h3>
 
-            {/* 5-State Legend */}
             <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-slate-400 border-b border-slate-800 pb-4">
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-3 rounded bg-emerald-500"></span> Answered ({answeredCount})
@@ -1026,7 +1273,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
         </div>
       </div>
 
-      {/* Stage 4 Pre-Submit Confirmation Modal */}
+      {/* Confirmation Modal */}
       {showSubmitModal && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="max-w-lg w-full bg-slate-900 border border-slate-800 p-6 sm:p-8 rounded-3xl space-y-6 shadow-2xl animate-fade-in">
@@ -1040,7 +1287,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
               </p>
             </div>
 
-            {/* Time Left Banner inside Modal */}
             <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800 flex justify-between items-center text-xs font-mono">
               <span className="text-slate-400 flex items-center gap-1.5">
                 <Clock className="w-4 h-4 text-cyan-400" /> Time Remaining:
@@ -1050,7 +1296,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
               </span>
             </div>
 
-            {/* Metrics Breakdown Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center text-xs font-mono">
               <div className="p-3 rounded-2xl bg-emerald-950/30 border border-emerald-900/50">
                 <span className="text-emerald-400 font-black text-xl block">{answeredCount}</span>
@@ -1070,7 +1315,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
               </div>
             </div>
 
-            {/* Audit Advisory Notice */}
             <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800 text-[11px] text-slate-400 space-y-1">
               <div>• Answered & Marked for Review: <strong className="text-purple-300">{answeredAndFlaggedCount}</strong></div>
               <div>• Unanswered & Marked for Review: <strong className="text-rose-300">{unansweredAndFlaggedCount}</strong></div>
