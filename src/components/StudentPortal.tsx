@@ -4,7 +4,7 @@ import { getSavedQuiz, applyGlobalTheme, subscribeToMessages, supabase } from '.
 import { 
   ShieldAlert, CheckCircle, AlertTriangle, Maximize, Clock, Trophy, 
   AlertOctagon, Edit3, Award, Bookmark, Flag, ArrowRight, ArrowLeft, 
-  RotateCcw, Check, Layers, Loader2, Menu, X, CheckCircle2
+  RotateCcw, Check, Layers, Loader2, Menu, X, CheckCircle2, AlertCircle
 } from 'lucide-react';
 
 interface StudentPortalProps {
@@ -72,7 +72,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     return saved || ('p_' + Math.random().toString(36).substring(2, 9));
   });
 
-  // Stage 3: Question Index & Palette Visibility
   const [currentIdx, setCurrentIdx] = useState<number>(() => {
     if (!resolvedQuizId) return 0;
     const saved = localStorage.getItem(`quizguard_current_idx_${resolvedQuizId}`);
@@ -112,7 +111,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     }
   });
 
-  // Server-Anchored Timer State
   const [startedAtTimestamp, setStartedAtTimestamp] = useState<number | null>(() => initialSession?.startedAt || null);
   const [totalDurationSec, setTotalDurationSec] = useState<number>(() => initialSession?.totalDurationSeconds || 1200);
 
@@ -366,7 +364,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     }
   };
 
-  // Stage 3 Question Navigation & Answers
   const handleSelectOption = (qId: string, optIdx: number) => {
     if (isAssessmentStopped || isAutoSubmitting) return;
     const updated = { ...answers, [qId]: optIdx };
@@ -424,6 +421,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     }
   };
 
+  // Stage 4 Partial & Negative Marking Engine
   const handleSubmit = async (forced = false) => {
     if (!quiz || isAssessmentStopped) return;
     setShowSubmitModal(false);
@@ -433,7 +431,8 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
     quiz.questions.forEach((q) => {
       const qSection = q.sectionId ? sectionMap.get(q.sectionId) : undefined;
-      const penalty = qSection ? qSection.negativeMarking : 0;
+      const isNegativeEnabled = qSection?.negativeMarkingEnabled ?? true;
+      const penalty = isNegativeEnabled ? (qSection?.negativeMarking || 0) : 0;
       const qMarks = q.marks !== undefined ? Number(q.marks) : 10;
       const userAns = answers[q.id];
 
@@ -454,6 +453,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
           }
         });
 
+        // Partial marks awarded for correct blanks
         if (blanksMatched > 0) {
           totalScore += blanksMatched * markPerBlank;
         } else if (attempted && penalty > 0) {
@@ -471,6 +471,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
           }
         }
       } else {
+        // MCQ
         if (userAns !== undefined && userAns !== null) {
           if (Number(userAns) === Number(q.correctAnswer)) {
             totalScore += qMarks;
@@ -481,7 +482,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
       }
     });
 
-    const finalScore = Math.max(0, Number(totalScore.toFixed(1)));
+    const finalScore = Math.max(0, Number(totalScore.toFixed(2)));
     setScore(finalScore);
     setIsFinished(true);
     setIsAutoSubmitting(false);
@@ -630,12 +631,12 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
         <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl mb-6 text-left">
           <div className="flex items-center gap-2 text-amber-400 font-semibold text-xs mb-2">
-            <AlertTriangle className="w-4 h-4" /> CBT Guidelines
+            <AlertTriangle className="w-4 h-4" /> Integrity Notice
           </div>
           <ul className="text-xs text-amber-200/80 space-y-1 list-disc list-inside">
-            <li>The total exam timer starts as soon as you begin and does not reset on refresh.</li>
-            <li>Free navigation is enabled: use the Question Palette to jump between questions.</li>
-            <li>Exiting fullscreen or switching tabs triggers proctor strikes (3 strikes = Disqualification).</li>
+            <li>Negative marking applies to incorrect answers according to section settings.</li>
+            <li>Multi-blank questions award partial marks for each correct blank.</li>
+            <li>Tab switching or exiting fullscreen logs proctor strikes (3 strikes = Disqualification).</li>
           </ul>
         </div>
 
@@ -666,35 +667,37 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
   const sectionMap = new Map((quiz.sections || []).map((s) => [s.id, s]));
   const currentSec = currentQ.sectionId ? sectionMap.get(currentQ.sectionId) : undefined;
 
-  // 5 CBT States: Answered, Review, Answered & Review, Skipped, Not Visited
-  const getQuestionStatus = (q: Question, idx: number) => {
+  const isQuestionAnswered = (q: Question) => {
     const val = answers[q.id];
-    const isAnswered = val !== undefined && val !== null && (
-      Array.isArray(val) 
-        ? val.some((v: string) => v && v.trim().length > 0)
-        : String(val).trim().length > 0
+    return val !== undefined && val !== null && (
+      Array.isArray(val) ? val.some((v: string) => v && v.trim().length > 0) : String(val).trim().length > 0
     );
+  };
+
+  const getQuestionStatus = (q: Question, idx: number) => {
+    const isAns = isQuestionAnswered(q);
     const isFlagged = !!reviewFlags[q.id];
     const isVisited = !!visitedIndices[idx];
 
-    if (isAnswered && isFlagged) return 'answered_review';
+    if (isAns && isFlagged) return 'answered_review';
     if (isFlagged) return 'review';
-    if (isAnswered) return 'answered';
+    if (isAns) return 'answered';
     if (isVisited) return 'skipped';
     return 'not_visited';
   };
 
-  const answeredCount = quiz.questions.filter((q) => {
-    const val = answers[q.id];
-    return val !== undefined && (Array.isArray(val) ? val.some(v => v && v.trim().length > 0) : String(val).trim().length > 0);
-  }).length;
-  const flaggedCount = Object.values(reviewFlags).filter(Boolean).length;
+  // Detailed Metrics for Pre-Submit Modal
+  const answeredQuestions = quiz.questions.filter(isQuestionAnswered);
+  const answeredCount = answeredQuestions.length;
   const unansweredCount = quiz.questions.length - answeredCount;
+  const flaggedCount = Object.values(reviewFlags).filter(Boolean).length;
+  const answeredAndFlaggedCount = quiz.questions.filter((q) => isQuestionAnswered(q) && !!reviewFlags[q.id]).length;
+  const unansweredAndFlaggedCount = quiz.questions.filter((q) => !isQuestionAnswered(q) && !!reviewFlags[q.id]).length;
+  const notVisitedCount = quiz.questions.filter((_, idx) => !visitedIndices[idx]).length;
 
   const isTimerCritical = totalSecondsLeft <= 60;
   const isTimerWarning = totalSecondsLeft <= 300 && totalSecondsLeft > 60;
 
-  // Stage 3 Grouped Sections for Palette
   const groupedSections: Record<string, { section?: QuizSection; questions: Array<{ q: Question; originalIdx: number }> }> = {};
 
   if (quiz.sections && quiz.sections.length > 0) {
@@ -714,7 +717,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
   return (
     <div className="max-w-7xl mx-auto my-4 space-y-5 relative">
-      {/* Auto-Submit Fullscreen Lockout Overlay */}
+      {/* Auto-Submit Fullscreen Overlay */}
       {isAutoSubmitting && (
         <div className="fixed inset-0 bg-black/90 z-50 flex flex-col items-center justify-center p-6 text-center">
           <div className="p-4 bg-rose-500/10 rounded-3xl border border-rose-500/30 mb-4 animate-bounce">
@@ -722,10 +725,10 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
           </div>
           <h2 className="text-2xl font-black text-white mb-2">Time Expired!</h2>
           <p className="text-slate-400 text-sm max-w-sm mb-6">
-            The exam timer has elapsed. Submitting all your responses automatically...
+            The exam timer has reached zero. Evaluating responses...
           </p>
           <div className="flex items-center gap-2 text-cyan-400 text-xs font-mono font-bold">
-            <Loader2 className="w-4 h-4 animate-spin" /> Recording final evaluation...
+            <Loader2 className="w-4 h-4 animate-spin" /> Auto-submitting results to host portal...
           </div>
         </div>
       )}
@@ -758,7 +761,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
             {strikes}/3 Strikes
           </div>
 
-          {/* Palette Mobile Drawer Button */}
           <button
             onClick={() => setIsPaletteOpenMobile(!isPaletteOpenMobile)}
             className="lg:hidden p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700"
@@ -776,7 +778,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
         </div>
       </div>
 
-      {/* Stage 3 Section Quick-Jump Tabs */}
+      {/* Section Quick Jump Tabs */}
       {quiz.sections && quiz.sections.length > 0 && (
         <div className="flex items-center gap-2 overflow-x-auto pb-1">
           <button
@@ -792,10 +794,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
           {quiz.sections.map((sec) => {
             const secQuestions = quiz.questions.filter((q) => q.sectionId === sec.id);
             const firstIdx = quiz.questions.findIndex((q) => q.sectionId === sec.id);
-            const secAnswered = secQuestions.filter(q => {
-              const val = answers[q.id];
-              return val !== undefined && (Array.isArray(val) ? val.some(v => v && v.trim().length > 0) : String(val).trim().length > 0);
-            }).length;
+            const secAnswered = secQuestions.filter(isQuestionAnswered).length;
 
             return (
               <button
@@ -837,14 +836,13 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
                 <span className="text-[11px] px-2.5 py-0.5 rounded-full font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
                   +{currentQ.marks || 10} Marks
                 </span>
-                {currentSec && currentSec.negativeMarking > 0 && (
-                  <span className="text-[10px] px-2 py-0.5 rounded font-mono text-rose-400">
-                    (-{currentSec.negativeMarking} penalty)
+                {currentSec && currentSec.negativeMarkingEnabled && currentSec.negativeMarking > 0 && (
+                  <span className="text-[10px] px-2 py-0.5 rounded font-mono text-rose-400 bg-rose-950/40 border border-rose-900/40">
+                    (-{currentSec.negativeMarking} on Wrong)
                   </span>
                 )}
               </div>
 
-              {/* Clear Response Button */}
               <button
                 onClick={() => handleClearResponse(currentQ.id)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-rose-950/40 border border-slate-700 hover:border-rose-500/40 text-slate-400 hover:text-rose-300 transition"
@@ -856,20 +854,30 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
             <h2 className="text-lg font-semibold text-white leading-relaxed">{currentQ.text}</h2>
 
-            {/* Answer Inputs based on Question Type */}
+            {/* Stage 4 Multi-Blank Question Layout */}
             {currentQ.type === 'multi_fib' ? (
               <div className="space-y-4 bg-slate-950 p-5 rounded-2xl border border-slate-800">
-                <span className="text-xs font-medium text-slate-400 block">Fill in all blanks:</span>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-medium text-slate-400">Fill all blanks (Partial marks awarded per blank):</span>
+                  <span className="font-mono text-cyan-400">
+                    +{((currentQ.marks || 10) / (Array.isArray(currentQ.correctAnswer) ? currentQ.correctAnswer.length : 1)).toFixed(2)} pts/blank
+                  </span>
+                </div>
                 {(Array.isArray(currentQ.correctAnswer) ? currentQ.correctAnswer : ['', '']).map((_, bIdx) => (
                   <div key={bIdx} className="space-y-1">
-                    <label className="text-xs text-cyan-400 font-mono">Blank {bIdx + 1}:</label>
+                    <label className="text-xs text-cyan-400 font-mono font-bold flex items-center gap-1">
+                      <span className="w-4 h-4 rounded-full bg-cyan-900/60 flex items-center justify-center text-[10px] text-cyan-300 border border-cyan-700">
+                        {bIdx + 1}
+                      </span>
+                      Blank {bIdx + 1}:
+                    </label>
                     <input
                       type="text"
                       disabled={isAutoSubmitting}
-                      placeholder={`Enter answer for Blank ${bIdx + 1}...`}
+                      placeholder={`Type answer for Blank ${bIdx + 1}...`}
                       value={(answers[currentQ.id]?.[bIdx] as string) || ''}
                       onChange={(e) => handleMultiBlankAnswer(currentQ.id, bIdx, e.target.value)}
-                      className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-cyan-500"
+                      className="w-full px-4 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-cyan-500 shadow-inner font-medium"
                     />
                   </div>
                 ))}
@@ -883,7 +891,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
                   placeholder="Type your answer here..."
                   value={(answers[currentQ.id] as string) || ''}
                   onChange={(e) => handleTextAnswer(currentQ.id, e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-cyan-500"
+                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-cyan-500 shadow-inner font-medium"
                 />
               </div>
             ) : (
@@ -897,7 +905,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
                       onClick={() => handleSelectOption(currentQ.id, oIdx)}
                       className={`w-full text-left p-4 rounded-2xl border text-sm font-medium transition flex items-center justify-between ${
                         isSelected
-                          ? 'bg-cyan-600/20 border-cyan-500 text-white'
+                          ? 'bg-cyan-600/20 border-cyan-500 text-white shadow-sm shadow-cyan-600/20'
                           : 'bg-slate-800/60 border-slate-700/60 text-slate-300 hover:border-slate-600'
                       }`}
                     >
@@ -909,7 +917,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
               </div>
             )}
 
-            {/* Stage 3 CBT Action Toolbar */}
+            {/* CBT Action Toolbar */}
             <div className="flex flex-wrap items-center justify-between gap-3 pt-5 border-t border-slate-800">
               <div className="flex items-center gap-2">
                 <button
@@ -945,14 +953,14 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
           </div>
         </div>
 
-        {/* Right Column: Stage 3 Section-Grouped Palette */}
+        {/* Right Column: Palette */}
         <div className={`space-y-5 ${isPaletteOpenMobile ? 'block' : 'hidden lg:block'}`}>
           <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl shadow-xl space-y-5">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <Bookmark className="w-4 h-4 text-cyan-400" /> Question Palette
             </h3>
 
-            {/* 5-State Color Legend */}
+            {/* 5-State Legend */}
             <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-slate-400 border-b border-slate-800 pb-4">
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-3 rounded bg-emerald-500"></span> Answered ({answeredCount})
@@ -964,20 +972,16 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
                 <span className="w-3 h-3 rounded bg-amber-500"></span> Skipped
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded bg-slate-800 border border-slate-700"></span> Not Visited
+                <span className="w-3 h-3 rounded bg-slate-800 border border-slate-700"></span> Not Visited ({notVisitedCount})
               </div>
             </div>
 
-            {/* Grouped Palette Display */}
             <div className="space-y-4 max-h-[420px] overflow-y-auto pr-1">
               {Object.entries(groupedSections).map(([secId, group]) => {
                 if (group.questions.length === 0) return null;
                 if (activeSectionFilter !== 'all' && secId !== activeSectionFilter) return null;
 
-                const secAnswered = group.questions.filter(({ q }) => {
-                  const val = answers[q.id];
-                  return val !== undefined && (Array.isArray(val) ? val.some(v => v && v.trim().length > 0) : String(val).trim().length > 0);
-                }).length;
+                const secAnswered = group.questions.filter(({ q }) => isQuestionAnswered(q)).length;
 
                 return (
                   <div key={secId} className="space-y-2 p-3 bg-slate-950/50 rounded-2xl border border-slate-800/80">
@@ -1022,42 +1026,73 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
         </div>
       </div>
 
-      {/* Confirmation Modal */}
+      {/* Stage 4 Pre-Submit Confirmation Modal */}
       {showSubmitModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-6">
-          <div className="max-w-md w-full bg-slate-900 border border-slate-800 p-6 rounded-3xl space-y-5 shadow-2xl">
-            <h3 className="text-lg font-bold text-white text-center">Confirm Assessment Submission</h3>
-            <p className="text-xs text-slate-400 text-center">
-              Review your question attempts before final submission:
-            </p>
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="max-w-lg w-full bg-slate-900 border border-slate-800 p-6 sm:p-8 rounded-3xl space-y-6 shadow-2xl animate-fade-in">
+            <div className="text-center space-y-1">
+              <div className="w-12 h-12 bg-amber-500/10 rounded-2xl flex items-center justify-center mx-auto mb-2 border border-amber-500/20">
+                <AlertCircle className="w-6 h-6 text-amber-400" />
+              </div>
+              <h3 className="text-xl font-bold text-white">Final Assessment Confirmation</h3>
+              <p className="text-xs text-slate-400">
+                Please review your question attempts before confirming final submission.
+              </p>
+            </div>
 
-            <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 grid grid-cols-3 gap-2 text-center text-xs font-mono">
-              <div className="p-2 rounded-xl bg-emerald-950/30 border border-emerald-900/40">
-                <span className="text-emerald-400 font-bold text-base block">{answeredCount}</span>
-                <span className="text-[10px] text-slate-400">Answered</span>
+            {/* Time Left Banner inside Modal */}
+            <div className="p-3 bg-slate-950 rounded-2xl border border-slate-800 flex justify-between items-center text-xs font-mono">
+              <span className="text-slate-400 flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-cyan-400" /> Time Remaining:
+              </span>
+              <span className="font-bold text-cyan-300 text-sm">
+                {Math.floor(totalSecondsLeft / 60)}m {totalSecondsLeft % 60}s
+              </span>
+            </div>
+
+            {/* Metrics Breakdown Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center text-xs font-mono">
+              <div className="p-3 rounded-2xl bg-emerald-950/30 border border-emerald-900/50">
+                <span className="text-emerald-400 font-black text-xl block">{answeredCount}</span>
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block mt-0.5">Answered</span>
               </div>
-              <div className="p-2 rounded-xl bg-amber-950/30 border border-amber-900/40">
-                <span className="text-amber-400 font-bold text-base block">{unansweredCount}</span>
-                <span className="text-[10px] text-slate-400">Unanswered</span>
+              <div className="p-3 rounded-2xl bg-amber-950/30 border border-amber-900/50">
+                <span className="text-amber-400 font-black text-xl block">{unansweredCount}</span>
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block mt-0.5">Unanswered</span>
               </div>
-              <div className="p-2 rounded-xl bg-purple-950/30 border border-purple-900/40">
-                <span className="text-purple-400 font-bold text-base block">{flaggedCount}</span>
-                <span className="text-[10px] text-slate-400">Review Flags</span>
+              <div className="p-3 rounded-2xl bg-purple-950/30 border border-purple-900/50">
+                <span className="text-purple-400 font-black text-xl block">{flaggedCount}</span>
+                <span className="text-[10px] text-slate-400 uppercase tracking-wider block mt-0.5">Review Flags</span>
+              </div>
+              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
+                <span className="text-slate-300 font-black text-xl block">{notVisitedCount}</span>
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider block mt-0.5">Not Visited</span>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            {/* Audit Advisory Notice */}
+            <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800 text-[11px] text-slate-400 space-y-1">
+              <div>• Answered & Marked for Review: <strong className="text-purple-300">{answeredAndFlaggedCount}</strong></div>
+              <div>• Unanswered & Marked for Review: <strong className="text-rose-300">{unansweredAndFlaggedCount}</strong></div>
+              {unansweredCount > 0 && (
+                <div className="text-amber-300/90 pt-1 font-medium">
+                  ?? You still have {unansweredCount} unattempted questions. Once submitted, you cannot return to this exam.
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
               <button
                 onClick={() => setShowSubmitModal(false)}
-                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition"
+                className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition"
               >
-                Resume Test
+                ? Return to Test
               </button>
               <button
                 onClick={() => handleSubmit(false)}
-                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition shadow-lg shadow-emerald-600/20"
+                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition shadow-lg shadow-emerald-600/20"
               >
-                Confirm & Submit
+                Confirm Final Submit
               </button>
             </div>
           </div>

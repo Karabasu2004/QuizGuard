@@ -7,14 +7,15 @@ export interface QuizSection {
   id: string;
   name: string;
   marksPerQuestion: number;
-  negativeMarking: number; // e.g. 0, 1, 2
+  negativeMarkingEnabled: boolean;
+  negativeMarking: number; // e.g. 1, 2
 }
 
 export interface Question {
   id: string;
   sectionId?: string;
-  text: string;
   type?: QuestionType;
+  text: string;
   options?: string[];
   correctAnswer: number | string | string[]; // string[] for multi_fib
   timeLimit?: number;
@@ -47,7 +48,7 @@ export interface Quiz {
   title: string;
   createdAt: string;
   mode?: QuizMode;
-  totalDurationMinutes?: number; // e.g. 20 for marks_challenge
+  totalDurationMinutes?: number;
   sections?: QuizSection[];
   pacingMode: 'manual' | 'auto' | 'ended';
   theme: ThemeColor;

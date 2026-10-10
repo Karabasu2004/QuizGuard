@@ -5,7 +5,7 @@ import { PieChart } from './PieChart';
 import { 
   Shield, Plus, Copy, Check, ExternalLink, LogOut, Trash2, Users, 
   Clock, Palette, CheckCircle2, Lock, Mail, User, RefreshCw, StopCircle, 
-  PlayCircle, Edit3, Award, Download, Layers, HelpCircle
+  PlayCircle, Edit3, Award, Download, Layers, HelpCircle, AlertOctagon, Settings2
 } from 'lucide-react';
 
 interface HostProps {
@@ -14,10 +14,10 @@ interface HostProps {
 }
 
 const DEFAULT_SECTIONS: QuizSection[] = [
-  { id: 'sec_3m', name: 'Section A (3 Marks)', marksPerQuestion: 3, negativeMarking: 1 },
-  { id: 'sec_5m', name: 'Section B (5 Marks)', marksPerQuestion: 5, negativeMarking: 1 },
-  { id: 'sec_7m', name: 'Section C (7 Marks)', marksPerQuestion: 7, negativeMarking: 2 },
-  { id: 'sec_10m', name: 'Section D (10 Marks)', marksPerQuestion: 10, negativeMarking: 2 },
+  { id: 'sec_3m', name: 'Section A (3M)', marksPerQuestion: 3, negativeMarkingEnabled: true, negativeMarking: 1 },
+  { id: 'sec_5m', name: 'Section B (5M)', marksPerQuestion: 5, negativeMarkingEnabled: true, negativeMarking: 1 },
+  { id: 'sec_7m', name: 'Section C (7M)', marksPerQuestion: 7, negativeMarkingEnabled: true, negativeMarking: 2 },
+  { id: 'sec_10m', name: 'Section D (10M)', marksPerQuestion: 10, negativeMarkingEnabled: true, negativeMarking: 2 },
 ];
 
 export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) => {
@@ -46,6 +46,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   const [pacingMode, setPacingMode] = useState<'manual' | 'auto'>('manual');
   const [selectedTheme, setSelectedTheme] = useState<ThemeColor>('slate');
   const [sections, setSections] = useState<QuizSection[]>(DEFAULT_SECTIONS);
+  const [showSectionConfig, setShowSectionConfig] = useState<boolean>(false);
 
   // Question Builder States
   const [selectedSectionId, setSelectedSectionId] = useState<string>('sec_3m');
@@ -89,7 +90,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     }
   }, [hostEmail]);
 
-  // Adjust multi-blank inputs array
   const handleBlankCountChange = (count: number) => {
     setBlankCount(count);
     const newArr = [...blankAnswers];
@@ -101,6 +101,15 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     const updated = [...blankAnswers];
     updated[index] = val;
     setBlankAnswers(updated);
+  };
+
+  // Section Negative Marking Configuration Handlers
+  const handleToggleNegativeMarking = (secId: string) => {
+    setSections(sections.map(s => s.id === secId ? { ...s, negativeMarkingEnabled: !s.negativeMarkingEnabled } : s));
+  };
+
+  const handleNegativeMarkValueChange = (secId: string, val: number) => {
+    setSections(sections.map(s => s.id === secId ? { ...s, negativeMarking: Math.max(0, val) } : s));
   };
 
   // Real-time Cloud Sync
@@ -206,7 +215,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   const handleAddQuestion = (e: React.FormEvent) => {
     e.preventDefault();
     if (!qText.trim()) {
-      alert('Please enter the question text.');
+      alert('Please enter question text.');
       return;
     }
 
@@ -240,7 +249,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
       setCorrectOpt(0);
     } else if (qType === 'fib') {
       if (!singleFibAnswer.trim()) {
-        alert('Please enter the correct answer.');
+        alert('Please enter expected correct answer.');
         return;
       }
       newQ = {
@@ -255,9 +264,8 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
       };
       setSingleFibAnswer('');
     } else {
-      // multi_fib
       if (blankAnswers.some((a) => !a.trim())) {
-        alert('Please provide answers for all the blanks.');
+        alert('Please fill out answers for all blanks.');
         return;
       }
       newQ = {
@@ -333,7 +341,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
 
   const handleStopAssessment = async () => {
     if (!activeQuiz) return;
-    if (!window.confirm('Are you sure you want to stop this assessment? All connected participants will be halted.')) {
+    if (!window.confirm('Are you sure you want to pause/stop this assessment? All connected participants will be halted.')) {
       return;
     }
 
@@ -404,7 +412,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     }
   };
 
-  // CSV Export for Leaderboard Results
   const exportResultsCSV = () => {
     if (!activeQuiz) return;
     const participants = Object.values(activeQuiz.participants || {});
@@ -621,7 +628,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   }
 
   if (activeQuiz) {
-    // Ranked by Score (Descending), then Time Taken (Ascending), Disqualified at bottom
     const participantsList = Object.values(activeQuiz.participants || {}).sort((a, b) => {
       const aDisq = a.status === 'Disqualified';
       const bDisq = b.status === 'Disqualified';
@@ -666,7 +672,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                 {isQuizEnded ? 'Assessment Paused / Stopped' : 'Live Assessment Active'}
               </span>
               <span className="text-[10px] px-2 py-0.5 rounded-full font-mono uppercase bg-cyan-950 text-cyan-300 border border-cyan-800">
-                {activeQuiz.mode === 'marks_challenge' ? 'Marks Challenge (20 Min Total)' : 'Classic Mode'}
+                {activeQuiz.mode === 'marks_challenge' ? 'Marks Challenge' : 'Classic Mode'}
               </span>
             </div>
             <h1 className="text-2xl font-black text-white mt-1">{activeQuiz.title}</h1>
@@ -676,7 +682,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* Theme Selector */}
             <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-2xl border border-slate-800">
               <span className="text-xs text-slate-400 flex items-center gap-1.5 px-2">
                 <Palette className="w-3.5 h-3.5 text-cyan-400" /> Theme:
@@ -700,7 +705,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               ))}
             </div>
 
-            {/* CSV Export */}
             <button
               onClick={exportResultsCSV}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs border border-slate-700 transition"
@@ -709,7 +713,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               <Download className="w-4 h-4 text-cyan-400" /> Export CSV
             </button>
 
-            {/* Stop or Resume Button */}
             {isQuizEnded ? (
               <button
                 onClick={() => handleResumeAssessment()}
@@ -884,7 +887,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-5">
-            {/* Quiz Mode Selector */}
+            {/* Mode Switcher */}
             <div className="bg-slate-950 p-2 rounded-2xl border border-slate-800 flex flex-wrap gap-2">
               <button
                 type="button"
@@ -895,7 +898,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                <Award className="w-4 h-4" /> Marks Challenge (20 min total, 3M-10M Sections)
+                <Award className="w-4 h-4" /> Marks Challenge (Sectional 3M-10M, 20 Min)
               </button>
               <button
                 type="button"
@@ -910,11 +913,67 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               </button>
             </div>
 
-            {/* Section Selector (Marks Challenge Only) */}
+            {/* Stage 4 Section Negative Marking Configuration Accordion */}
+            {quizMode === 'marks_challenge' && (
+              <div className="p-4 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Settings2 className="w-4 h-4 text-cyan-400" /> Section Negative Marking Rules
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowSectionConfig(!showSectionConfig)}
+                    className="text-xs text-cyan-400 hover:text-cyan-300 font-mono"
+                  >
+                    {showSectionConfig ? 'Hide Rules ?' : 'Customize Penalties ?'}
+                  </button>
+                </div>
+
+                {showSectionConfig && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                    {sections.map((sec) => (
+                      <div key={sec.id} className="p-3 bg-slate-900 rounded-xl border border-slate-800 space-y-2">
+                        <div className="flex justify-between items-center">
+                          <span className="text-xs font-bold text-white">{sec.name}</span>
+                          <label className="flex items-center gap-1.5 cursor-pointer text-xs">
+                            <input
+                              type="checkbox"
+                              checked={sec.negativeMarkingEnabled}
+                              onChange={() => handleToggleNegativeMarking(sec.id)}
+                              className="accent-cyan-500 rounded"
+                            />
+                            <span className={sec.negativeMarkingEnabled ? 'text-rose-400 font-bold' : 'text-slate-400'}>
+                              {sec.negativeMarkingEnabled ? 'Penalty Active' : 'No Penalty'}
+                            </span>
+                          </label>
+                        </div>
+                        {sec.negativeMarkingEnabled && (
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] text-slate-400">Wrong deduction:</span>
+                            <input
+                              type="number"
+                              step="0.5"
+                              min="0"
+                              max="10"
+                              value={sec.negativeMarking}
+                              onChange={(e) => handleNegativeMarkValueChange(sec.id, Number(e.target.value))}
+                              className="w-16 px-2 py-1 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono font-bold text-rose-400 text-center focus:outline-none"
+                            />
+                            <span className="text-[11px] text-slate-400">marks</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Target Section Chooser */}
             {quizMode === 'marks_challenge' && (
               <div className="space-y-2">
                 <label className="text-xs text-slate-400 font-medium block flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5 text-cyan-400" /> Select Target Section for New Question:
+                  <Layers className="w-3.5 h-3.5 text-cyan-400" /> Target Section for New Question:
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {sections.map((s) => (
@@ -931,7 +990,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                       <span className="text-xs font-bold text-white block">{s.name}</span>
                       <span className="text-[11px] text-cyan-400 font-mono block">+{s.marksPerQuestion} Marks</span>
                       <span className="text-[10px] text-rose-400 font-mono">
-                        {s.negativeMarking > 0 ? `-${s.negativeMarking} on Wrong` : 'No penalty'}
+                        {s.negativeMarkingEnabled ? `-${s.negativeMarking} on Wrong` : '0 penalty'}
                       </span>
                     </button>
                   ))}
@@ -942,7 +1001,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
             {/* Question Format Selector */}
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
               <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                <Plus className="text-cyan-400 w-4 h-4" /> Construct Question
+                <Plus className="text-cyan-400 w-4 h-4" /> Add Question Content
               </h2>
 
               <div className="flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
@@ -985,7 +1044,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                   placeholder={
                     qType === 'multi_fib'
                       ? "e.g. In PBFT, the phases are: 1. [Blank 1], 2. [Blank 2], 3. [Blank 3]"
-                      : "e.g. What consensus algorithm guarantees finality in distributed systems?"
+                      : "e.g. Which consensus mechanism avoids forks under network partition?"
                   }
                   value={qText}
                   onChange={(e) => setQText(e.target.value)}
@@ -1042,6 +1101,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                 </div>
               )}
 
+              {/* Stage 4 Multi-Blank Builder with Partial Mark Preview */}
               {qType === 'multi_fib' && (
                 <div className="space-y-3 bg-slate-950/60 p-4 rounded-2xl border border-slate-800">
                   <div className="flex items-center justify-between">
@@ -1065,11 +1125,11 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                     {blankAnswers.map((ans, idx) => (
                       <div key={idx} className="space-y-1">
-                        <label className="text-xs text-slate-400">Blank {idx + 1} Correct Answer:</label>
+                        <label className="text-xs text-slate-400">Blank {idx + 1} Answer Key:</label>
                         <input
                           type="text"
                           required
-                          placeholder={`Answer for [Blank ${idx + 1}]`}
+                          placeholder={`Key for [Blank ${idx + 1}]`}
                           value={ans}
                           onChange={(e) => handleBlankAnswerChange(idx, e.target.value)}
                           className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-500"
@@ -1077,27 +1137,25 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                       </div>
                     ))}
                   </div>
-                  <p className="text-[11px] text-slate-500">
-                    Partial marks will be awarded: each correct blank earns {((sections.find(s => s.id === selectedSectionId)?.marksPerQuestion || 10) / blankCount).toFixed(1)} marks.
-                  </p>
+                  <div className="p-2.5 bg-cyan-950/40 rounded-xl border border-cyan-800/40 text-[11px] text-cyan-300 font-mono">
+                    ? Partial Scoring: Each correct blank awards +{((sections.find(s => s.id === selectedSectionId)?.marksPerQuestion || 10) / blankCount).toFixed(2)} marks.
+                  </div>
                 </div>
               )}
 
-              {/* Optional Answer Explanation */}
               <div>
                 <label className="text-xs text-slate-400 block mb-1 font-medium flex items-center gap-1.5">
-                  <HelpCircle className="w-3.5 h-3.5 text-cyan-400" /> Explanation (Displayed to candidates after submit)
+                  <HelpCircle className="w-3.5 h-3.5 text-cyan-400" /> Answer Explanation (Shown after exam)
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. PBFT tolerates up to (n-1)/3 Byzantine faulty nodes."
+                  placeholder="e.g. PBFT uses pre-prepare, prepare, and commit phases."
                   value={qExplanation}
                   onChange={(e) => setQExplanation(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-800/80 border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-500"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800/80 border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-500"
                 />
               </div>
 
-              {/* Classic Mode specific controls */}
               {quizMode === 'classic' && (
                 <div className="flex flex-wrap items-center gap-5 pt-2">
                   <div className="flex items-center gap-2">
@@ -1168,7 +1226,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
             })}
             {draftQuestions.length === 0 && (
               <p className="text-xs text-slate-500 text-center py-6 border border-dashed border-slate-800 rounded-2xl font-mono">
-                No questions added yet. Use the form above to build questions.
+                No questions added yet. Use the builder above to stage questions.
               </p>
             )}
           </div>
@@ -1190,7 +1248,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
 
             {quizMode === 'marks_challenge' && (
               <div>
-                <label className="text-xs text-slate-400 block mb-1 font-medium">Total Exam Duration (Minutes)</label>
+                <label className="text-xs text-slate-400 block mb-1 font-medium">Total Duration (Minutes)</label>
                 <input
                   type="number"
                   min={1}
@@ -1203,7 +1261,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
             )}
 
             <div>
-              <label className="text-xs text-slate-400 block mb-1 font-medium">Assessment Theme</label>
+              <label className="text-xs text-slate-400 block mb-1 font-medium">Theme</label>
               <select
                 value={selectedTheme}
                 onChange={(e) => setSelectedTheme(e.target.value as ThemeColor)}
@@ -1218,9 +1276,8 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
             </div>
 
             <div className="p-3.5 bg-slate-950/60 rounded-xl border border-slate-800 text-xs text-slate-400 space-y-1">
-              <div>• Mode: <strong className="text-white capitalize">{quizMode.replace('_', ' ')}</strong></div>
-              <div>• Questions Staged: <strong className="text-white">{draftQuestions.length}</strong></div>
-              <div>• Total Marks: <strong className="text-amber-400">{draftQuestions.reduce((sum, q) => sum + (q.marks || 10), 0)} pts</strong></div>
+              <div>• Total Questions: <strong className="text-white">{draftQuestions.length}</strong></div>
+              <div>• Total Maximum Marks: <strong className="text-amber-400">{draftQuestions.reduce((sum, q) => sum + (q.marks || 10), 0)} pts</strong></div>
             </div>
 
             <button
@@ -1233,7 +1290,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           </div>
 
           <div className="bg-slate-900/40 border border-slate-800 p-6 rounded-3xl space-y-3">
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Your Saved Assessments</h4>
+            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Saved Assessments</h4>
             {quizzes.map((q) => (
               <div 
                 key={q.id} 
