@@ -3,7 +3,7 @@ import { HostDashboard } from './components/HostDashboard';
 import { StudentPortal } from './components/StudentPortal';
 import { ThemeColor, THEME_CONFIG } from './types';
 import { subscribeToMessages, applyGlobalTheme, getSavedQuiz } from './supabase';
-import { Shield, MonitorCheck, ArrowRight } from 'lucide-react';
+import { GraduationCap, BookOpen, ArrowRight, Sun, Moon } from 'lucide-react';
 
 export default function App() {
   const [role, setRole] = useState<'landing' | 'host' | 'student'>(() => {
@@ -18,7 +18,8 @@ export default function App() {
     return params.get('quiz') || params.get('quizId') || null;
   });
 
-  const [activeTheme, setActiveTheme] = useState<ThemeColor>('slate');
+  const [activeTheme, setActiveTheme] = useState<ThemeColor>('academic');
+  const isLight = THEME_CONFIG[activeTheme]?.isLight ?? true;
 
   useEffect(() => {
     const rawSearch = window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '');
@@ -34,7 +35,7 @@ export default function App() {
         }
       });
     } else {
-      applyGlobalTheme('slate');
+      applyGlobalTheme('academic');
     }
   }, []);
 
@@ -53,61 +54,100 @@ export default function App() {
     applyGlobalTheme(newTheme);
   };
 
+  const toggleLightDark = () => {
+    const nextTheme: ThemeColor = isLight ? 'slate' : 'academic';
+    handleHostThemeChange(nextTheme);
+  };
+
   return (
     <div 
-      className="min-h-screen flex flex-col justify-between"
-      style={{
-        background: `radial-gradient(circle at 50% 0%, ${THEME_CONFIG[activeTheme].glow} 0%, transparent 65%)`
-      }}
+      className={`min-h-screen flex flex-col justify-between transition-colors duration-200 ${
+        isLight ? 'bg-slate-50 text-slate-900' : 'bg-slate-950 text-slate-100'
+      }`}
     >
-      <header className="border-b border-slate-800/80 backdrop-blur-md sticky top-0 z-40 bg-black/40">
+      <header className={`border-b sticky top-0 z-40 transition-colors ${
+        isLight ? 'bg-white/95 border-slate-200 backdrop-blur-md' : 'bg-slate-900/90 border-slate-800 backdrop-blur-md'
+      }`}>
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div 
             onClick={() => setRole('landing')} 
             className="flex items-center gap-3 cursor-pointer group"
           >
-            <div className="p-2 bg-gradient-to-tr from-cyan-600 to-blue-600 rounded-xl shadow-lg shadow-cyan-500/20 group-hover:scale-105 transition">
-              <Shield className="w-5 h-5 text-white" />
+            <div className="p-2.5 bg-blue-700 rounded-xl text-white shadow-sm shadow-blue-700/20 group-hover:bg-blue-800 transition">
+              <GraduationCap className="w-5 h-5" />
             </div>
-            <div className="leading-tight">
-              <span className="text-lg font-black tracking-wider text-white">
-                QUIZGUARD
-              </span>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className={`text-lg font-black tracking-wide ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                  QuizGuard
+                </span>
+                <span className={`text-[10px] font-mono uppercase font-bold px-2 py-0.5 rounded-full border ${
+                  isLight ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-blue-950 text-blue-300 border-blue-800'
+                }`}>
+                  Academic Assessment System
+                </span>
+              </div>
             </div>
           </div>
 
-          {role === 'host' && (
-            <button 
-              onClick={() => setRole('landing')}
-              className="text-xs font-semibold text-white px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 border border-blue-500 shadow-md shadow-blue-600/20 transition"
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleLightDark}
+              className={`p-2 rounded-xl border text-xs flex items-center gap-1.5 transition ${
+                isLight 
+                  ? 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200' 
+                  : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
+              }`}
+              title="Toggle Light / Dark Institutional Canvas"
             >
-              Back
+              {isLight ? <Moon className="w-4 h-4 text-slate-600" /> : <Sun className="w-4 h-4 text-amber-400" />}
+              <span className="hidden sm:inline font-medium">{isLight ? 'Dark Mode' : 'Light Mode'}</span>
             </button>
-          )}
+
+            {role === 'host' && (
+              <button 
+                onClick={() => setRole('landing')}
+                className="text-xs font-semibold text-white px-4 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 border border-blue-700 shadow-sm transition"
+              >
+                Back
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-8">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8">
         {role === 'landing' && (
-          <div className="py-16 space-y-12 text-center max-w-2xl mx-auto">
-            <h1 className="text-4xl sm:text-5xl font-black text-white tracking-tight leading-tight">
-              Proctored Live Assessments
+          <div className="py-12 sm:py-20 space-y-10 text-center max-w-2xl mx-auto">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-semibold bg-blue-50 border-blue-200 text-blue-700">
+              <BookOpen className="w-4 h-4" /> Standardized Computer-Based Testing Portal
+            </div>
+
+            <h1 className={`text-4xl sm:text-5xl font-black tracking-tight leading-tight ${isLight ? 'text-slate-900' : 'text-white'}`}>
+              Institutional Examination & Proctoring Platform
             </h1>
-            <p className="text-slate-400 text-sm sm:text-base leading-relaxed">
-              Anti-cheat browser lockdown, real-time question pacing, live theme broadcasting, and instant telemetry reports.
+            
+            <p className={`text-sm sm:text-base leading-relaxed ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+              Secure examination delivery with sectional marking, multi-blank partial credit, anti-cheating browser lockdown, and instant scorecards designed for educators.
             </p>
 
             <div 
               onClick={() => setRole('host')}
-              className="group bg-slate-900/80 border border-slate-800 hover:border-cyan-500/50 p-8 rounded-3xl cursor-pointer transition shadow-xl max-w-md mx-auto text-left"
+              className={`group border p-8 rounded-3xl cursor-pointer transition shadow-lg max-w-md mx-auto text-left ${
+                isLight 
+                  ? 'bg-white border-slate-200 hover:border-blue-500 shadow-slate-200/50' 
+                  : 'bg-slate-900/80 border-slate-800 hover:border-blue-500 shadow-black/40'
+              }`}
             >
-              <MonitorCheck className="w-10 h-10 text-cyan-400 mb-4 group-hover:scale-110 transition" />
-              <h3 className="text-xl font-bold text-white mb-2">Host Portal</h3>
-              <p className="text-xs text-slate-400 mb-6 leading-relaxed">
-                Register or sign in, construct questions with timers, switch assessment themes live, and inspect participant integrity charts.
+              <div className="p-3 bg-blue-50 text-blue-700 w-fit rounded-2xl mb-4 group-hover:scale-105 transition">
+                <GraduationCap className="w-8 h-8" />
+              </div>
+              <h3 className={`text-xl font-bold mb-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>Faculty & Proctor Portal</h3>
+              <p className={`text-xs mb-6 leading-relaxed ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
+                Sign in to build sectional assessments, configure negative marking penalties, manage your Question Bank, and view real-time class leaderboards.
               </p>
-              <div className="flex items-center text-xs font-bold text-cyan-400 group-hover:translate-x-1 transition-transform">
-                Open Host Studio <ArrowRight className="w-4 h-4 ml-1.5" />
+              <div className="flex items-center text-xs font-bold text-blue-700 group-hover:translate-x-1 transition-transform">
+                Open Faculty Studio <ArrowRight className="w-4 h-4 ml-1.5" />
               </div>
             </div>
           </div>
@@ -128,7 +168,11 @@ export default function App() {
         )}
       </main>
 
-      <footer className="border-t border-slate-900/60 bg-black/40 py-4"></footer>
+      <footer className={`border-t py-4 text-center text-xs ${
+        isLight ? 'border-slate-200 bg-white text-slate-500' : 'border-slate-900 bg-slate-950 text-slate-600'
+      }`}>
+        QuizGuard Assessment System • High-Integrity Academic Examination Portal
+      </footer>
     </div>
   );
 }

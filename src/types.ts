@@ -1,4 +1,4 @@
-export type ThemeColor = 'slate' | 'midnight' | 'cyberpunk' | 'emerald' | 'crimson';
+export type ThemeColor = 'academic' | 'slate' | 'navy' | 'emerald' | 'crimson';
 
 export type QuestionType = 'mcq' | 'fib' | 'multi_fib';
 export type QuizMode = 'classic' | 'marks_challenge';
@@ -86,30 +86,35 @@ export interface Quiz {
   participants: Record<string, StudentResult>;
 }
 
-export const THEME_CONFIG: Record<ThemeColor, { name: string; glow: string; bg: string }> = {
+export const THEME_CONFIG: Record<ThemeColor, { name: string; glow: string; bg: string; isLight?: boolean }> = {
+  academic: {
+    name: 'Academic Light (University)',
+    glow: 'rgba(37, 99, 235, 0.08)',
+    bg: '#F8FAFC',
+    isLight: true,
+  },
   slate: {
-    name: 'Slate Obsidian',
-    glow: 'rgba(56, 189, 248, 0.15)',
-    bg: '#020617',
+    name: 'Institutional Slate (Dark)',
+    glow: 'rgba(56, 189, 248, 0.12)',
+    bg: '#0F172A',
+    isLight: false,
   },
-  midnight: {
-    name: 'Midnight Cobalt',
-    glow: 'rgba(59, 130, 246, 0.2)',
+  navy: {
+    name: 'Cobalt Navy',
+    glow: 'rgba(59, 130, 246, 0.15)',
     bg: '#030712',
-  },
-  cyberpunk: {
-    name: 'Cyberpunk Neon',
-    glow: 'rgba(217, 70, 239, 0.2)',
-    bg: '#0a0518',
+    isLight: false,
   },
   emerald: {
-    name: 'Emerald Matrix',
-    glow: 'rgba(16, 185, 129, 0.2)',
-    bg: '#021810',
+    name: 'Sage Green',
+    glow: 'rgba(16, 185, 129, 0.12)',
+    bg: '#062016',
+    isLight: false,
   },
   crimson: {
-    name: 'Crimson Ember',
-    glow: 'rgba(239, 68, 68, 0.2)',
-    bg: '#180404',
+    name: 'Academic Crimson',
+    glow: 'rgba(239, 68, 68, 0.12)',
+    bg: '#1C0606',
+    isLight: false,
   },
 };
