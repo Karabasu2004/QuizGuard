@@ -73,7 +73,7 @@ export default function App() {
             onClick={() => setRole('landing')} 
             className="flex items-center gap-3 cursor-pointer group"
           >
-            <div className="p-2.5 bg-blue-700 rounded-xl text-white shadow-sm shadow-blue-700/20 group-hover:bg-blue-800 transition">
+            <div className={`p-2.5 rounded-xl shadow-sm transition ${isLight ? 'bg-blue-700 text-white hover:bg-blue-800' : 'bg-cyan-600 text-white hover:bg-cyan-500'}`}>
               <GraduationCap className="w-5 h-5" />
             </div>
             <div>
@@ -107,7 +107,9 @@ export default function App() {
             {role === 'host' && (
               <button 
                 onClick={() => setRole('landing')}
-                className="text-xs font-semibold text-white px-4 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 border border-blue-700 shadow-sm transition"
+                className={`text-xs font-semibold text-white px-4 py-2 rounded-xl border shadow-sm transition ${
+                  isLight ? 'bg-blue-700 hover:bg-blue-800 border-blue-700' : 'bg-blue-600 hover:bg-blue-500 border-blue-500'
+                }`}
               >
                 Back
               </button>
@@ -119,7 +121,9 @@ export default function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8">
         {role === 'landing' && (
           <div className="py-12 sm:py-20 space-y-10 text-center max-w-2xl mx-auto">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-semibold bg-blue-50 border-blue-200 text-blue-700">
+            <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-semibold ${
+              isLight ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-blue-950 border-blue-800 text-blue-300'
+            }`}>
               <BookOpen className="w-4 h-4" /> Standardized Computer-Based Testing Portal
             </div>
 
@@ -136,17 +140,19 @@ export default function App() {
               className={`group border p-8 rounded-3xl cursor-pointer transition shadow-lg max-w-md mx-auto text-left ${
                 isLight 
                   ? 'bg-white border-slate-200 hover:border-blue-500 shadow-slate-200/50' 
-                  : 'bg-slate-900/80 border-slate-800 hover:border-blue-500 shadow-black/40'
+                  : 'bg-slate-900/80 border-slate-800 hover:border-cyan-500 shadow-black/40'
               }`}
             >
-              <div className="p-3 bg-blue-50 text-blue-700 w-fit rounded-2xl mb-4 group-hover:scale-105 transition">
+              <div className={`p-3 w-fit rounded-2xl mb-4 group-hover:scale-105 transition ${
+                isLight ? 'bg-blue-50 text-blue-700' : 'bg-cyan-500/10 text-cyan-400'
+              }`}>
                 <GraduationCap className="w-8 h-8" />
               </div>
               <h3 className={`text-xl font-bold mb-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>Faculty & Proctor Portal</h3>
               <p className={`text-xs mb-6 leading-relaxed ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
-                Sign in to build sectional assessments, configure negative marking penalties, manage your Question Bank, and view real-time class leaderboards.
+                Sign in to construct sectional assessments, configure negative marking penalties, manage your Question Bank, and view real-time class leaderboards.
               </p>
-              <div className="flex items-center text-xs font-bold text-blue-700 group-hover:translate-x-1 transition-transform">
+              <div className={`flex items-center text-xs font-bold group-hover:translate-x-1 transition-transform ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>
                 Open Faculty Studio <ArrowRight className="w-4 h-4 ml-1.5" />
               </div>
             </div>
@@ -157,6 +163,7 @@ export default function App() {
           <HostDashboard 
             onLogout={() => setRole('landing')} 
             onThemeChange={handleHostThemeChange} 
+            isLight={isLight}
           />
         )}
         
@@ -164,6 +171,7 @@ export default function App() {
           <StudentPortal 
             quizId={quizIdFromUrl || undefined}
             quizIdFromUrl={quizIdFromUrl || undefined} 
+            isLight={isLight}
           />
         )}
       </main>
