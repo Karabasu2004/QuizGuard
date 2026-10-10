@@ -20,6 +20,91 @@ interface StoredExamSession {
   totalDurationSeconds: number;
 }
 
+// Stage 6 Deterministic Per-Candidate Randomization Engine
+const getOrSetRandomizedQuestions = (quiz: Quiz, quizId: string): Question[] => {
+  const cacheKey = `quizguard_student_q_${quizId}`;
+  const cached = localStorage.getItem(cacheKey);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length === quiz.questions.length) {
+        return parsed;
+      }
+    } catch (e) {}
+  }
+
+  let questions = [...quiz.questions];
+
+  // 1. In-Section Question Shuffling
+  if (quiz.shuffleQuestions) {
+    if (quiz.sections && quiz.sections.length > 0) {
+      const grouped: Record<string, Question[]> = {};
+      quiz.sections.forEach(s => { grouped[s.id] = []; });
+      grouped['default'] = [];
+
+      questions.forEach(q => {
+        const sId = q.sectionId || 'default';
+        if (!grouped[sId]) grouped[sId] = [];
+        grouped[sId].push(q);
+      });
+
+      const shuffledBySection: Question[] = [];
+      quiz.sections.forEach(s => {
+        const list = grouped[s.id] || [];
+        for (let i = list.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [list[i], list[j]] = [list[j], list[i]];
+        }
+        shuffledBySection.push(...list);
+      });
+
+      if (grouped['default'].length > 0) {
+        const list = grouped['default'];
+        for (let i = list.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [list[i], list[j]] = [list[j], list[i]];
+        }
+        shuffledBySection.push(...list);
+      }
+
+      questions = shuffledBySection;
+    } else {
+      for (let i = questions.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [questions[i], questions[j]] = [questions[j], questions[i]];
+      }
+    }
+  }
+
+  // 2. MCQ Option Shuffling with Automatic Correct Key Remapping
+  if (quiz.shuffleOptions) {
+    questions = questions.map(q => {
+      if (q.type === 'mcq' && q.options && q.options.length > 1) {
+        const origCorrectIdx = Number(q.correctAnswer);
+        const correctText = q.options[origCorrectIdx];
+
+        const shuffledOpts = [...q.options];
+        for (let i = shuffledOpts.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffledOpts[i], shuffledOpts[j]] = [shuffledOpts[j], shuffledOpts[i]];
+        }
+
+        const newCorrectIdx = shuffledOpts.findIndex(opt => opt === correctText);
+
+        return {
+          ...q,
+          options: shuffledOpts,
+          correctAnswer: newCorrectIdx >= 0 ? newCorrectIdx : q.correctAnswer
+        };
+      }
+      return q;
+    });
+  }
+
+  localStorage.setItem(cacheKey, JSON.stringify(questions));
+  return questions;
+};
+
 export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId, quizIdFromUrl, onExit }) => {
   const [resolvedQuizId, setResolvedQuizId] = useState<string>(() => {
     const params = new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : ''));
@@ -162,7 +247,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     loadQuiz(resolvedQuizId);
   }, [resolvedQuizId]);
 
-  // Robust Quiz Loader with Local Multi-Cache Fallback
   const loadQuiz = async (id: string) => {
     setLoadingQuiz(true);
     try {
@@ -173,14 +257,12 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
         setStrikes(3);
       }
 
-      // 1. Try local cache
       let loaded: Quiz | null = null;
       const direct = localStorage.getItem(`quizguard_quiz_${id}`);
       if (direct) {
         try { loaded = JSON.parse(direct); } catch (e) {}
       }
 
-      // 2. Scan host quizzes cache
       if (!loaded) {
         for (let i = 0; i < localStorage.length; i++) {
           const key = localStorage.key(i);
@@ -194,12 +276,14 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
         }
       }
 
-      // 3. Query Supabase
       if (!loaded) {
         loaded = await getSavedQuiz(id);
       }
 
       if (loaded) {
+        // Stage 6: Apply In-Section Randomization and Option Shuffling
+        loaded.questions = getOrSetRandomizedQuestions(loaded, id);
+
         setQuiz(loaded);
         if (loaded.theme) applyGlobalTheme(loaded.theme);
         if (loaded.pacingMode === 'ended' || (loaded as any).status === 'ended') {
@@ -221,7 +305,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
         }
       }
 
-      // Sync Supabase participant state
       if (supabase && participantId) {
         try {
           const { data: pData } = await supabase
@@ -254,7 +337,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     }
   };
 
-  // Reset / Retake handler for local developer testing
   const handleRetakeExam = () => {
     if (!resolvedQuizId) return;
     localStorage.removeItem(`quizguard_session_${resolvedQuizId}`);
@@ -264,6 +346,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     localStorage.removeItem(`quizguard_start_time_${resolvedQuizId}`);
     localStorage.removeItem(`quizguard_pid_${resolvedQuizId}`);
     localStorage.removeItem(`quizguard_current_idx_${resolvedQuizId}`);
+    localStorage.removeItem(`quizguard_student_q_${resolvedQuizId}`);
 
     const newPid = 'p_' + Math.random().toString(36).substring(2, 9);
     setParticipantId(newPid);
@@ -277,6 +360,11 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     setTotalSecondsLeft(totalDurationSec || 1200);
     setScore(0);
     hasAutoSubmitted.current = false;
+
+    if (quiz) {
+      const reshuffled = getOrSetRandomizedQuestions(quiz, resolvedQuizId);
+      setQuiz({ ...quiz, questions: reshuffled });
+    }
   };
 
   useEffect(() => {
@@ -707,7 +795,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     );
   }
 
-  // Finished & Results View
   if (isFinished) {
     const totalMax = quiz.questions.reduce((sum, q) => sum + (q.marks || 10), 0);
     const percentage = totalMax > 0 ? ((score / totalMax) * 100).toFixed(1) : '0';
@@ -755,7 +842,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
             </div>
           </div>
 
-          {/* Developer / Host Testing Reset Button */}
           <div className="pt-2">
             <button
               onClick={handleRetakeExam}
@@ -939,7 +1025,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     );
   }
 
-  // Join Screen
   if (!isJoined) {
     return (
       <div className="max-w-md mx-auto my-8 p-6 sm:p-8 bg-slate-900 border border-slate-800 rounded-3xl shadow-xl">
@@ -953,6 +1038,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
             <AlertTriangle className="w-4 h-4" /> Integrity Notice
           </div>
           <ul className="text-xs text-amber-200/80 space-y-1 list-disc list-inside">
+            <li>Question order and multiple-choice options are randomized per candidate.</li>
             <li>Negative marking applies to incorrect answers according to section settings.</li>
             <li>Multi-blank questions award partial marks for each correct blank.</li>
             <li>Tab switching or exiting fullscreen logs proctor strikes (3 strikes = Disqualification).</li>

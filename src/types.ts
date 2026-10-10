@@ -23,6 +23,11 @@ export interface Question {
   explanation?: string;
 }
 
+export interface QuestionBankItem extends Question {
+  bankId: string;
+  createdAt: string;
+}
+
 export interface Violation {
   timestamp: string;
   message: string;
@@ -72,6 +77,8 @@ export interface Quiz {
   mode?: QuizMode;
   totalDurationMinutes?: number;
   sections?: QuizSection[];
+  shuffleQuestions?: boolean;
+  shuffleOptions?: boolean;
   pacingMode: 'manual' | 'auto' | 'ended';
   theme: ThemeColor;
   questions: Question[];

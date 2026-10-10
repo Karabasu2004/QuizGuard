@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Quiz, Question, QuestionType, QuizMode, QuizSection, StudentResult, ThemeColor, THEME_CONFIG } from '../types';
+import { Quiz, Question, QuestionType, QuizMode, QuizSection, StudentResult, ThemeColor, THEME_CONFIG, QuestionBankItem } from '../types';
 import { broadcastMessage, subscribeToMessages, saveQuiz, applyGlobalTheme, supabase } from '../supabase';
 import { PieChart } from './PieChart';
 import { 
   Shield, Plus, Copy, Check, ExternalLink, LogOut, Trash2, Users, 
   Clock, Palette, CheckCircle2, Lock, Mail, User, RefreshCw, StopCircle, 
-  PlayCircle, Edit3, Award, Download, Layers, HelpCircle, AlertOctagon, Settings2, BarChart2, Trophy
+  PlayCircle, Edit3, Award, Download, Layers, HelpCircle, AlertOctagon, Settings2, 
+  BarChart2, Trophy, Shuffle, Database, Search, FolderPlus, ArrowDownToLine, X
 } from 'lucide-react';
 
 interface HostProps {
@@ -39,6 +40,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [activeQuiz, setActiveQuiz] = useState<Quiz | null>(null);
 
+  // Assessment Settings
   const [quizMode, setQuizMode] = useState<QuizMode>('marks_challenge');
   const [newTitle, setNewTitle] = useState('');
   const [totalDurationMin, setTotalDurationMin] = useState<number>(20);
@@ -47,6 +49,17 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   const [sections, setSections] = useState<QuizSection[]>(DEFAULT_SECTIONS);
   const [showSectionConfig, setShowSectionConfig] = useState<boolean>(false);
 
+  // Stage 6 Randomization Settings
+  const [shuffleQuestions, setShuffleQuestions] = useState<boolean>(true);
+  const [shuffleOptions, setShuffleOptions] = useState<boolean>(true);
+
+  // Stage 6 Question Bank States
+  const [questionBank, setQuestionBank] = useState<QuestionBankItem[]>([]);
+  const [isBankModalOpen, setIsBankModalOpen] = useState<boolean>(false);
+  const [bankSearchQuery, setBankSearchQuery] = useState<string>('');
+  const [bankTypeFilter, setBankTypeFilter] = useState<'all' | 'mcq' | 'fib' | 'multi_fib'>('all');
+
+  // Question Builder States
   const [selectedSectionId, setSelectedSectionId] = useState<string>('sec_3m');
   const [qType, setQType] = useState<QuestionType>('mcq');
   const [qText, setQText] = useState('');
@@ -62,6 +75,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   const [qExplanation, setQExplanation] = useState('');
   const [qTimerClassic, setQTimerClassic] = useState<number>(60);
   const [customClassicMarks, setCustomClassicMarks] = useState<number>(10);
+  const [saveAlsoToBank, setSaveAlsoToBank] = useState<boolean>(false);
 
   const [draftQuestions, setDraftQuestions] = useState<Question[]>([]);
   const [copied, setCopied] = useState(false);
@@ -85,8 +99,20 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     if (hostEmail) {
       const stored = localStorage.getItem(`quizguard_host_quizzes_${hostEmail}`);
       if (stored) setQuizzes(JSON.parse(stored));
+
+      const storedBank = localStorage.getItem(`quizguard_bank_${hostEmail}`);
+      if (storedBank) {
+        try { setQuestionBank(JSON.parse(storedBank)); } catch (e) {}
+      }
     }
   }, [hostEmail]);
+
+  const saveBankToStorage = (updated: QuestionBankItem[]) => {
+    setQuestionBank(updated);
+    if (hostEmail) {
+      localStorage.setItem(`quizguard_bank_${hostEmail}`, JSON.stringify(updated));
+    }
+  };
 
   const handleBlankCountChange = (count: number) => {
     setBlankCount(count);
@@ -109,6 +135,35 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     setSections(sections.map(s => s.id === secId ? { ...s, negativeMarking: Math.max(0, val) } : s));
   };
 
+  // Stage 6 Bank Actions
+  const addToBank = (q: Question) => {
+    const bankItem: QuestionBankItem = {
+      ...q,
+      bankId: `bank_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      createdAt: new Date().toLocaleDateString()
+    };
+    const updated = [bankItem, ...questionBank];
+    saveBankToStorage(updated);
+  };
+
+  const deleteFromBank = (bankId: string) => {
+    const updated = questionBank.filter(item => item.bankId !== bankId);
+    saveBankToStorage(updated);
+  };
+
+  const importFromBank = (bankItem: QuestionBankItem) => {
+    const newQ: Question = {
+      ...bankItem,
+      id: `q_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      sectionId: quizMode === 'marks_challenge' ? selectedSectionId : undefined,
+      marks: quizMode === 'marks_challenge' 
+        ? (sections.find(s => s.id === selectedSectionId)?.marksPerQuestion || bankItem.marks || 3)
+        : (bankItem.marks || 10)
+    };
+    setDraftQuestions(prev => [...prev, newQ]);
+  };
+
+  // Real-time Cloud Sync
   useEffect(() => {
     if (!activeQuiz || !supabase) return;
 
@@ -283,9 +338,14 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
       setBlankAnswers(['', '', '']);
     }
 
+    if (saveAlsoToBank) {
+      addToBank(newQ);
+    }
+
     setDraftQuestions([...draftQuestions, newQ]);
     setQText('');
     setQExplanation('');
+    setSaveAlsoToBank(false);
   };
 
   const handleLaunchQuiz = async () => {
@@ -340,7 +400,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     }
 
     if (currentDrafts.length === 0) {
-      alert('Please add at least 1 question. Fill out the question builder and click "+ Append Question to Assessment".');
+      alert('Please add at least 1 question. Fill out the question builder or import from the Question Bank.');
       return;
     }
 
@@ -352,6 +412,8 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
       mode: quizMode,
       totalDurationMinutes: quizMode === 'marks_challenge' ? totalDurationMin : undefined,
       sections: quizMode === 'marks_challenge' ? sections : undefined,
+      shuffleQuestions,
+      shuffleOptions,
       pacingMode,
       theme: selectedTheme,
       questions: currentDrafts,
@@ -533,6 +595,13 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // Filtered Question Bank Items
+  const filteredBank = questionBank.filter(item => {
+    const matchesSearch = item.text.toLowerCase().includes(bankSearchQuery.toLowerCase());
+    const matchesType = bankTypeFilter === 'all' || item.type === bankTypeFilter;
+    return matchesSearch && matchesType;
+  });
+
   if (!hostEmail) {
     return (
       <div className="flex items-center justify-center min-h-[65vh] px-4">
@@ -641,7 +710,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                   placeholder="host@university.edu"
                   value={regEmail}
                   onChange={(e) => setRegEmail(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-500"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800/80 border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-500"
                 />
               </div>
 
@@ -655,7 +724,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                   placeholder="Create secure password"
                   value={regPassword}
                   onChange={(e) => setRegPassword(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-500"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-800/80 border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-500"
                 />
               </div>
 
@@ -743,6 +812,11 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               <span className="text-[10px] px-2 py-0.5 rounded-full font-mono uppercase bg-cyan-950 text-cyan-300 border border-cyan-800">
                 {activeQuiz.mode === 'marks_challenge' ? 'Marks Challenge' : 'Classic Mode'}
               </span>
+              {activeQuiz.shuffleQuestions && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-mono uppercase bg-purple-950 text-purple-300 border border-purple-800 flex items-center gap-1">
+                  <Shuffle className="w-3 h-3" /> Question Shuffle
+                </span>
+              )}
             </div>
             <h1 className="text-2xl font-black text-white mt-1">{activeQuiz.title}</h1>
             <p className="text-xs text-slate-400">
@@ -807,7 +881,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           </div>
         </div>
 
-        {/* Candidate Invitation Link Banner */}
+        {/* Candidate Invitation Link */}
         <div className="bg-slate-900/80 border border-cyan-500/30 p-6 rounded-3xl shadow-xl space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs font-mono uppercase tracking-widest text-cyan-400 font-bold">
@@ -1005,9 +1079,17 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           <h1 className="text-xl font-bold text-white">Quiz Studio</h1>
           <p className="text-xs font-mono text-slate-400">Host: <span className="text-cyan-300">{hostEmail}</span></p>
         </div>
-        <button onClick={handleSignOut} className="flex items-center gap-2 px-3.5 py-2 bg-slate-800 hover:bg-red-500/10 text-slate-300 hover:text-red-400 rounded-xl text-xs font-semibold border border-slate-700 transition">
-          <LogOut className="w-4 h-4" /> Sign Out
-        </button>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => setIsBankModalOpen(true)}
+            className="flex items-center gap-2 px-3.5 py-2 bg-purple-950/60 hover:bg-purple-900/80 text-purple-300 rounded-xl text-xs font-bold border border-purple-800 transition"
+          >
+            <Database className="w-4 h-4 text-purple-400" /> Question Bank ({questionBank.length})
+          </button>
+          <button onClick={handleSignOut} className="flex items-center gap-2 px-3.5 py-2 bg-slate-800 hover:bg-red-500/10 text-slate-300 hover:text-red-400 rounded-xl text-xs font-semibold border border-slate-700 transition">
+            <LogOut className="w-4 h-4" /> Sign Out
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -1308,16 +1390,42 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                 </div>
               )}
 
-              <button type="submit" className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs border border-slate-700 transition">
-                + Append Question to Assessment
-              </button>
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={saveAlsoToBank}
+                    onChange={(e) => setSaveAlsoToBank(e.target.checked)}
+                    className="accent-purple-500 rounded"
+                  />
+                  <span>Also save copy to Question Bank</span>
+                </label>
+
+                <button type="submit" className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs border border-slate-700 transition">
+                  + Append Question to Assessment
+                </button>
+              </div>
             </form>
           </div>
 
           <div className="space-y-3">
-            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">
-              Staged Questions ({draftQuestions.length})
-            </h3>
+            <div className="flex justify-between items-center">
+              <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">
+                Staged Questions ({draftQuestions.length})
+              </h3>
+              {draftQuestions.length > 0 && (
+                <button
+                  onClick={() => {
+                    draftQuestions.forEach(q => addToBank(q));
+                    alert(`Saved all ${draftQuestions.length} staged questions to Question Bank!`);
+                  }}
+                  className="text-xs text-purple-400 hover:text-purple-300 font-bold flex items-center gap-1.5"
+                >
+                  <FolderPlus className="w-3.5 h-3.5" /> Save All to Bank
+                </button>
+              )}
+            </div>
+
             {draftQuestions.map((q, i) => {
               const sec = sections.find((s) => s.id === q.sectionId);
               return (
@@ -1339,15 +1447,24 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                     </div>
                     <p className="text-sm font-semibold text-white mt-1">{q.text}</p>
                   </div>
-                  <button onClick={() => setDraftQuestions(draftQuestions.filter((_, idx) => idx !== i))} className="text-slate-500 hover:text-red-400 p-2">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => { addToBank(q); alert('Saved to Question Bank!'); }}
+                      className="text-slate-400 hover:text-purple-300 p-2"
+                      title="Save to Bank"
+                    >
+                      <Database className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => setDraftQuestions(draftQuestions.filter((_, idx) => idx !== i))} className="text-slate-500 hover:text-red-400 p-2">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               );
             })}
             {draftQuestions.length === 0 && (
               <p className="text-xs text-slate-500 text-center py-6 border border-dashed border-slate-800 rounded-2xl font-mono">
-                No questions added yet. Use the builder above to stage questions.
+                No questions added yet. Use the builder above or import from Question Bank.
               </p>
             )}
           </div>
@@ -1380,6 +1497,31 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                 />
               </div>
             )}
+
+            {/* Stage 6 Randomization Settings */}
+            <div className="p-3.5 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-2.5">
+              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Shuffle className="w-3.5 h-3.5 text-purple-400" /> Anti-Cheating Randomization
+              </span>
+              <label className="flex items-center justify-between text-xs text-slate-300 cursor-pointer">
+                <span>Shuffle Questions in Section:</span>
+                <input
+                  type="checkbox"
+                  checked={shuffleQuestions}
+                  onChange={(e) => setShuffleQuestions(e.target.checked)}
+                  className="accent-purple-500 rounded"
+                />
+              </label>
+              <label className="flex items-center justify-between text-xs text-slate-300 cursor-pointer">
+                <span>Shuffle MCQ Options (A, B, C, D):</span>
+                <input
+                  type="checkbox"
+                  checked={shuffleOptions}
+                  onChange={(e) => setShuffleOptions(e.target.checked)}
+                  className="accent-purple-500 rounded"
+                />
+              </label>
+            </div>
 
             <div>
               <label className="text-xs text-slate-400 block mb-1 font-medium">Theme</label>
@@ -1430,6 +1572,95 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
           </div>
         </div>
       </div>
+
+      {/* Stage 6 Question Bank Modal Drawer */}
+      {isBankModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="max-w-2xl w-full bg-slate-900 border border-slate-800 p-6 rounded-3xl space-y-5 shadow-2xl animate-fade-in max-h-[85vh] flex flex-col">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-purple-400">
+                <Database className="w-5 h-5" />
+                <h3 className="text-lg font-bold text-white">Question Bank Repository</h3>
+              </div>
+              <button 
+                onClick={() => setIsBankModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex-1 relative">
+                <Search className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
+                <input
+                  type="text"
+                  placeholder="Search repository questions..."
+                  value={bankSearchQuery}
+                  onChange={(e) => setBankSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white focus:outline-none focus:border-purple-500"
+                />
+              </div>
+
+              <div className="flex gap-1.5 text-xs">
+                {(['all', 'mcq', 'fib', 'multi_fib'] as const).map(type => (
+                  <button
+                    key={type}
+                    onClick={() => setBankTypeFilter(type)}
+                    className={`px-3 py-1.5 rounded-xl font-bold uppercase text-[10px] transition ${
+                      bankTypeFilter === type ? 'bg-purple-600 text-white' : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+                    }`}
+                  >
+                    {type.replace('_', ' ')}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+              {filteredBank.map((item) => (
+                <div key={item.bankId} className="p-4 bg-slate-950 rounded-2xl border border-slate-800 flex justify-between items-start gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold uppercase bg-slate-900 text-slate-300 border border-slate-800">
+                        {item.type}
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                        {item.marks || 10} Marks
+                      </span>
+                      <span className="text-[10px] text-slate-500 font-mono">{item.createdAt}</span>
+                    </div>
+                    <p className="text-white text-xs font-semibold">{item.text}</p>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => { importFromBank(item); alert('Imported to current quiz!'); }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl text-xs transition"
+                    >
+                      <ArrowDownToLine className="w-3.5 h-3.5" /> Import
+                    </button>
+                    <button
+                      onClick={() => deleteFromBank(item.bankId)}
+                      className="p-1.5 text-slate-500 hover:text-red-400 rounded-lg transition"
+                      title="Delete from bank"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {filteredBank.length === 0 && (
+                <p className="text-slate-500 text-xs font-mono py-12 text-center">
+                  {questionBank.length === 0 
+                    ? 'No questions in bank yet. Check "Also save copy to Question Bank" when adding questions!' 
+                    : 'No questions match your current search/filter.'}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
