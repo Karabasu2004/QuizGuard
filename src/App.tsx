@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { HostDashboard } from './components/HostDashboard';
 import { StudentPortal } from './components/StudentPortal';
 import { ThemeColor, THEME_CONFIG } from './types';
-import { subscribeToMessages, applyGlobalTheme, getSavedQuiz } from './supabase';
+import { applyGlobalTheme } from './supabase';
 import { GraduationCap, BookOpen, ArrowRight, Sun, Moon } from 'lucide-react';
 
 export default function App() {
@@ -18,8 +18,14 @@ export default function App() {
     return params.get('quiz') || params.get('quizId') || null;
   });
 
-  const [activeTheme, setActiveTheme] = useState<ThemeColor>('academic');
-  const isLight = THEME_CONFIG[activeTheme]?.isLight ?? true;
+  // Local device preference: defaults to dark 'slate', never forced by other users
+  const [activeTheme, setActiveTheme] = useState<ThemeColor>(() => {
+    const saved = localStorage.getItem('quizguard_theme_pref');
+    if (saved === 'academic' || saved === 'slate') return saved as ThemeColor;
+    return 'slate'; // Default Dark Mode
+  });
+
+  const isLight = activeTheme === 'academic';
 
   useEffect(() => {
     const rawSearch = window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : '');
@@ -28,35 +34,15 @@ export default function App() {
     if (quizId) {
       setQuizIdFromUrl(quizId);
       setRole('student');
-      getSavedQuiz(quizId).then((loaded) => {
-        if (loaded?.theme) {
-          setActiveTheme(loaded.theme);
-          applyGlobalTheme(loaded.theme);
-        }
-      });
-    } else {
-      applyGlobalTheme('academic');
     }
   }, []);
 
-  useEffect(() => {
-    const unsubscribe = subscribeToMessages((msg) => {
-      if (msg.type === 'THEME_CHANGE' && msg.theme) {
-        setActiveTheme(msg.theme);
-        applyGlobalTheme(msg.theme);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const handleHostThemeChange = (newTheme: ThemeColor) => {
-    setActiveTheme(newTheme);
-    applyGlobalTheme(newTheme);
-  };
-
+  // Save preference locally on this device only
   const toggleLightDark = () => {
     const nextTheme: ThemeColor = isLight ? 'slate' : 'academic';
-    handleHostThemeChange(nextTheme);
+    setActiveTheme(nextTheme);
+    localStorage.setItem('quizguard_theme_pref', nextTheme);
+    applyGlobalTheme(nextTheme);
   };
 
   return (
@@ -91,6 +77,7 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Independent Theme Toggle Button for this device */}
             <button
               onClick={toggleLightDark}
               className={`p-2 rounded-xl border text-xs flex items-center gap-1.5 transition ${
@@ -98,7 +85,7 @@ export default function App() {
                   ? 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200' 
                   : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700'
               }`}
-              title="Toggle Light / Dark Institutional Canvas"
+              title="Toggle Light / Dark Mode"
             >
               {isLight ? <Moon className="w-4 h-4 text-slate-600" /> : <Sun className="w-4 h-4 text-amber-400" />}
               <span className="hidden sm:inline font-medium">{isLight ? 'Dark Mode' : 'Light Mode'}</span>
@@ -162,7 +149,7 @@ export default function App() {
         {role === 'host' && (
           <HostDashboard 
             onLogout={() => setRole('landing')} 
-            onThemeChange={handleHostThemeChange} 
+            onThemeChange={() => {}} 
             isLight={isLight}
           />
         )}

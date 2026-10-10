@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Quiz, Question, QuestionType, QuizMode, QuizSection, StudentResult, ThemeColor, THEME_CONFIG, QuestionBankItem } from '../types';
-import { broadcastMessage, subscribeToMessages, saveQuiz, applyGlobalTheme, supabase } from '../supabase';
+import { saveQuiz, supabase } from '../supabase';
 import { PieChart } from './PieChart';
 import { 
   Shield, Plus, Copy, Check, ExternalLink, LogOut, Trash2, Users, 
@@ -12,7 +12,7 @@ import {
 
 interface HostProps {
   onLogout: () => void;
-  onThemeChange: (theme: ThemeColor) => void;
+  onThemeChange?: (theme: ThemeColor) => void;
   isLight?: boolean;
 }
 
@@ -23,7 +23,7 @@ const DEFAULT_SECTIONS: QuizSection[] = [
   { id: 'sec_10m', name: 'Section D (10M)', marksPerQuestion: 10, negativeMarkingEnabled: true, negativeMarking: 2 },
 ];
 
-export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, isLight = true }) => {
+export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }) => {
   const [hostEmail, setHostEmail] = useState<string>('');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
 
@@ -50,17 +50,11 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
   // Staged Question Editing
   const [editingQuestionIndex, setEditingQuestionIndex] = useState<number | null>(null);
 
-  // Stage 7: Proctoring Console Warnings & Incidents
-  const [customWarningText, setCustomWarningText] = useState<string>('');
-  const [targetStudentForWarning, setTargetStudentForWarning] = useState<string | null>(null);
-  const [incidentLogs, setIncidentLogs] = useState<Array<{ timestamp: string; studentName: string; reason: string; strikes: number }>>([]);
-
   // Assessment Settings
   const [quizMode, setQuizMode] = useState<QuizMode>('marks_challenge');
   const [newTitle, setNewTitle] = useState('');
   const [totalDurationMin, setTotalDurationMin] = useState<number>(20);
   const [pacingMode, setPacingMode] = useState<'manual' | 'auto'>('manual');
-  const [selectedTheme, setSelectedTheme] = useState<ThemeColor>('academic');
   const [sections, setSections] = useState<QuizSection[]>(DEFAULT_SECTIONS);
   const [showSectionConfig, setShowSectionConfig] = useState<boolean>(false);
 
@@ -177,27 +171,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
     setDraftQuestions(prev => [...prev, newQ]);
   };
 
-  // Real-time Cloud Sync & Live Proctor Incident Feed
-  useEffect(() => {
-    if (!activeQuiz) return;
-
-    const unsubscribe = subscribeToMessages((msg: any) => {
-      if (msg.type === 'PARTICIPANT_INCIDENT' && msg.quizId === activeQuiz.id) {
-        setIncidentLogs(prev => [
-          {
-            timestamp: new Date().toLocaleTimeString(),
-            studentName: msg.name || 'Candidate',
-            reason: msg.reason,
-            strikes: msg.strikes
-          },
-          ...prev.slice(0, 19)
-        ]);
-      }
-    });
-
-    return () => unsubscribe();
-  }, [activeQuiz?.id]);
-
   useEffect(() => {
     if (!activeQuiz || !supabase) return;
 
@@ -213,7 +186,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
           data.filter((p: any) => !p.id.startsWith('QUIZ_STATE_')).forEach((p: any) => {
             let vList = p.violations;
             if (typeof vList === 'string') {
-              try { vList = JSON.parse(vList); } catch (e) { vList = []; }
+              try { vList = JSON.parse(vList); } catch (e) {}
             }
 
             pMap[p.id] = {
@@ -244,43 +217,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
     const interval = setInterval(fetchLiveParticipants, 2000);
     return () => clearInterval(interval);
   }, [activeQuiz?.id]);
-
-  // Stage 7: Send Direct Proctor Warning
-  const handleSendProctorWarning = () => {
-    if (!activeQuiz || !customWarningText.trim()) return;
-
-    broadcastMessage({
-      type: 'PROCTOR_WARNING' as any,
-      quizId: activeQuiz.id,
-      targetParticipantId: targetStudentForWarning,
-      message: customWarningText.trim()
-    });
-
-    alert(targetStudentForWarning ? 'Direct warning transmitted to candidate!' : 'Broadcast warning displayed to all candidates!');
-    setCustomWarningText('');
-    setTargetStudentForWarning(null);
-  };
-
-  // Stage 7: Adjust Participant Strikes from Proctor Console
-  const handleAdjustStrikes = async (student: StudentResult, newStrikes: number) => {
-    if (!activeQuiz) return;
-    const clamped = Math.max(0, Math.min(3, newStrikes));
-    const newStatus = clamped >= 3 ? 'Disqualified' : 'Active';
-
-    if (supabase) {
-      await supabase.from('participants').update({
-        strikes: clamped,
-        status: newStatus
-      }).eq('id', student.id);
-    }
-
-    broadcastMessage({
-      type: 'PROCTOR_STRIKE_ADJUST' as any,
-      quizId: activeQuiz.id,
-      targetParticipantId: student.id,
-      newStrikes: clamped
-    });
-  };
 
   const handleRegister = (e: React.FormEvent) => {
     e.preventDefault();
@@ -346,7 +282,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
     setQuizMode(q.mode || 'marks_challenge');
     setTotalDurationMin(q.totalDurationMinutes || 20);
     setSections(q.sections || DEFAULT_SECTIONS);
-    setSelectedTheme(q.theme);
     setShuffleQuestions(q.shuffleQuestions ?? true);
     setShuffleOptions(q.shuffleOptions ?? true);
     setDraftQuestions([...q.questions]);
@@ -507,6 +442,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
     setSaveAlsoToBank(false);
   };
 
+  // Launch assessment WITHOUT changing host theme
   const handleLaunchOrUpdateQuiz = async () => {
     let currentDrafts = [...draftQuestions];
 
@@ -534,7 +470,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
       shuffleQuestions,
       shuffleOptions,
       pacingMode,
-      theme: selectedTheme,
+      theme: 'slate', // Neutral default, clients choose their own display theme
       questions: currentDrafts,
       status: 'live',
       participants: existingQuiz ? existingQuiz.participants : {},
@@ -546,10 +482,9 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
     setQuizzes(updated);
     localStorage.setItem(`quizguard_host_quizzes_${hostEmail}`, JSON.stringify(updated));
 
+    // Instant switch to active view WITHOUT modifying active theme!
     setActiveQuiz(savedQuizObj);
     setEditingQuizId(null);
-    onThemeChange(selectedTheme);
-    applyGlobalTheme(selectedTheme);
     setDraftQuestions([]);
     setNewTitle('');
     setQText('');
@@ -566,22 +501,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
     }
   };
 
-  const handleThemeSwitch = (theme: ThemeColor) => {
-    if (!activeQuiz) return;
-    const updated: Quiz = { ...activeQuiz, theme };
-    setActiveQuiz(updated);
-    saveQuiz(updated);
-
-    onThemeChange(theme);
-    applyGlobalTheme(theme);
-
-    broadcastMessage({
-      type: 'THEME_CHANGE',
-      quizId: activeQuiz.id,
-      theme,
-    });
-  };
-
   const handleStopAssessment = async () => {
     if (!activeQuiz) return;
     if (!window.confirm('Are you sure you want to conclude this assessment? All connected participants will be halted.')) {
@@ -591,11 +510,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
     const updated: Quiz = { ...activeQuiz, status: 'ended' };
     setActiveQuiz(updated);
     saveQuiz(updated);
-
-    broadcastMessage({
-      type: 'STOP_QUIZ' as any,
-      quizId: activeQuiz.id,
-    });
 
     if (supabase) {
       try {
@@ -629,14 +543,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
       setQuizzes(updatedList);
       localStorage.setItem(`quizguard_host_quizzes_${hostEmail}`, JSON.stringify(updatedList));
     }
-
-    onThemeChange(updated.theme);
-    applyGlobalTheme(updated.theme);
-
-    broadcastMessage({
-      type: 'RESUME_QUIZ' as any,
-      quizId: targetQuiz.id,
-    });
 
     if (supabase) {
       try {
@@ -1000,7 +906,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
           </div>
         </div>
 
-        {/* Candidate Invitation Link */}
+        {/* Candidate Invitation Link Banner */}
         <div className={`p-6 rounded-3xl border shadow-sm space-y-3 ${isLight ? 'bg-blue-50/60 border-blue-200' : 'bg-slate-900/80 border-cyan-500/30'}`}>
           <div className="flex items-center justify-between">
             <span className={`text-xs font-mono uppercase tracking-widest font-bold ${isLight ? 'text-blue-800' : 'text-cyan-400'}`}>
@@ -1037,70 +943,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
           </div>
         </div>
 
-        {/* Stage 7: Real-Time Proctor Console & Direct Warning Dispatcher */}
-        <div className={`p-6 rounded-3xl border space-y-5 ${cardCls}`}>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
-            <div>
-              <h3 className={`text-base font-bold flex items-center gap-2 ${textPrimary}`}>
-                <BellRing className="w-5 h-5 text-purple-600" /> Live Proctor Interventions & Announcements
-              </h3>
-              <p className={`text-xs ${textMuted}`}>Transmit direct warning banners to individual candidates or broadcast to the entire room.</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="md:col-span-2 space-y-2">
-              <label className={`text-xs font-bold block ${textMuted}`}>Warning or Notice Text:</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="e.g. Please look directly at your screen and exit all background apps."
-                  value={customWarningText}
-                  onChange={(e) => setCustomWarningText(e.target.value)}
-                  className={`flex-1 px-4 py-2.5 rounded-xl border text-xs focus:outline-none ${inputCls}`}
-                />
-                <button
-                  onClick={handleSendProctorWarning}
-                  className={`px-5 py-2.5 font-bold rounded-xl text-xs text-white transition ${
-                    isLight ? 'bg-blue-700 hover:bg-blue-800' : 'bg-purple-600 hover:bg-purple-500'
-                  }`}
-                >
-                  Dispatch Alert
-                </button>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className={`text-xs font-bold block ${textMuted}`}>Target Candidate:</label>
-              <select
-                value={targetStudentForWarning || ''}
-                onChange={(e) => setTargetStudentForWarning(e.target.value ? e.target.value : null)}
-                className={`w-full px-3.5 py-2.5 rounded-xl border text-xs focus:outline-none ${inputCls}`}
-              >
-                <option value="">Broadcast to All Connected Candidates</option>
-                {participantsList.map(s => (
-                  <option key={s.id} value={s.id}>{s.name} ({s.strikes}/3 Strikes)</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Live Incident Stream */}
-          {incidentLogs.length > 0 && (
-            <div className={`p-4 rounded-2xl border space-y-2 text-xs font-mono ${subCardCls}`}>
-              <span className={`block font-bold ${textMuted}`}>Live Security Incident Stream:</span>
-              <div className="space-y-1.5 max-h-36 overflow-y-auto">
-                {incidentLogs.map((log, idx) => (
-                  <div key={idx} className="flex justify-between items-center text-rose-500">
-                    <span>• [{log.timestamp}] <strong>{log.studentName}</strong>: {log.reason}</span>
-                    <span className="font-bold">({log.strikes}/3 Strikes)</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <PieChart title="Integrity Breakdown" data={statusChartData} isLight={isLight} />
           <PieChart title="Score Brackets" data={scoreChartData} isLight={isLight} />
@@ -1125,7 +967,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
                   <th className="py-3 px-4">Time Taken</th>
                   <th className="py-3 px-4">Performance</th>
                   <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Strikes Control</th>
+                  <th className="py-3 px-4">Strikes</th>
                   <th className="py-3 px-4 text-right">Audit</th>
                 </tr>
               </thead>
@@ -1160,30 +1002,12 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
                         </span>
                       </td>
                       <td className="py-3 px-4">
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            onClick={() => handleAdjustStrikes(s, s.strikes - 1)}
-                            disabled={s.strikes === 0}
-                            className={`px-1.5 py-0.5 rounded text-[10px] border disabled:opacity-30 ${buttonSecCls}`}
-                            title="Forgive strike"
-                          >
-                            -
-                          </button>
-                          <span className={`font-mono font-bold px-2 py-0.5 rounded text-xs ${
-                            s.strikes === 0 ? (isLight ? 'bg-slate-100 text-slate-600' : 'bg-slate-800 text-slate-400') :
-                            s.strikes >= 3 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            {s.strikes}/3
-                          </span>
-                          <button
-                            onClick={() => handleAdjustStrikes(s, s.strikes + 1)}
-                            disabled={s.strikes >= 3}
-                            className={`px-1.5 py-0.5 rounded text-[10px] border disabled:opacity-30 ${buttonSecCls}`}
-                            title="Add manual strike"
-                          >
-                            +
-                          </button>
-                        </div>
+                        <span className={`font-mono font-bold px-2 py-0.5 rounded text-xs ${
+                          s.strikes === 0 ? (isLight ? 'bg-slate-100 text-slate-600' : 'bg-slate-800 text-slate-400') :
+                          s.strikes >= 3 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {s.strikes}/3 Strikes
+                        </span>
                       </td>
                       <td className="py-3 px-4 text-right">
                         <button 
@@ -1208,7 +1032,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
           </div>
         </div>
 
-        {/* Candidate Audit Modal */}
         {inspectedStudent && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-6">
             <div className={`max-w-xl w-full border p-6 rounded-3xl space-y-4 shadow-2xl ${cardCls}`}>
