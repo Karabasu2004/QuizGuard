@@ -1,6 +1,7 @@
 ﻿import { createClient } from '@supabase/supabase-js';
 import { Quiz, ThemeColor } from './types';
 
+// The base URL must NOT have /rest/v1/ at the end
 const supabaseUrl = 'https://xpmmjwltjwaoadncomjs.supabase.co';
 const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhwbW1qd2x0andhb2FkbmNvbWpzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA3NzcxNTQsImV4cCI6MjEwNjM1MzE1NH0.MdaTeVN0nwqUZIel6SjBRL-cSaxH7xT2fIpBeuaNkts';
 
@@ -58,7 +59,7 @@ export const saveQuiz = async (quiz: Quiz) => {
 
   if (supabase) {
     try {
-      const { error } = await supabase.from('quizzes').upsert({
+      const { data, error } = await supabase.from('quizzes').upsert({
         id: quiz.id,
         host_email: quiz.hostEmail || '',
         title: quiz.title,
@@ -67,12 +68,12 @@ export const saveQuiz = async (quiz: Quiz) => {
         pacing_mode: quiz.pacingMode || 'manual',
         status: quiz.status || 'live',
         updated_at: new Date().toISOString()
-      });
+      }).select();
 
       if (error) {
-        console.error('Supabase saveQuiz rejected:', error.message);
+        console.error('Supabase cloud save error:', error.message);
       } else {
-        console.log('Quiz successfully stored in Supabase cloud:', quiz.id);
+        console.log('Quiz successfully saved to cloud:', data);
       }
     } catch (e) {
       console.error('saveQuiz exception:', e);
@@ -81,19 +82,32 @@ export const saveQuiz = async (quiz: Quiz) => {
 };
 
 export const getSavedQuiz = async (id: string): Promise<Quiz | null> => {
+  // Check local cache
   const local = localStorage.getItem(`quizguard_quiz_${id}`);
   if (local) {
     try { return JSON.parse(local); } catch (e) {}
   }
 
+  // Fetch from Supabase
   if (supabase) {
     try {
-      const { data, error } = await supabase.from('quizzes').select('*').eq('id', id).maybeSingle();
+      const { data, error } = await supabase
+        .from('quizzes')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
       if (error) {
-        console.error('Supabase cloud fetch error:', error.message);
+        console.error('Supabase getSavedQuiz error:', error.message);
         return null;
       }
+
       if (data) {
+        let parsedQuestions = data.questions;
+        if (typeof parsedQuestions === 'string') {
+          try { parsedQuestions = JSON.parse(parsedQuestions); } catch (e) { parsedQuestions = []; }
+        }
+
         return {
           id: data.id,
           hostEmail: data.host_email || '',
@@ -111,7 +125,7 @@ export const getSavedQuiz = async (id: string): Promise<Quiz | null> => {
           shuffleOptions: true,
           pacingMode: data.pacing_mode || 'manual',
           theme: data.theme || 'slate',
-          questions: Array.isArray(data.questions) ? data.questions : [],
+          questions: Array.isArray(parsedQuestions) ? parsedQuestions : [],
           status: data.status || 'live',
           participants: {}
         };
