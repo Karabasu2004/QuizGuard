@@ -5,7 +5,7 @@ import {
   ShieldAlert, CheckCircle, AlertTriangle, Maximize, Clock, Trophy, 
   AlertOctagon, Edit3, Award, Bookmark, Flag, ArrowRight, ArrowLeft, 
   RotateCcw, Check, Layers, Loader2, Menu, X, AlertCircle, HelpCircle, BarChart3, RefreshCw,
-  Printer, BellRing
+  Printer, BellRing, Sparkles, ChevronDown
 } from 'lucide-react';
 
 interface StudentPortalProps {
@@ -104,6 +104,148 @@ const getOrSetRandomizedQuestions = (quiz: Quiz, quizId: string): Question[] => 
   return questions;
 };
 
+// Reusable evaluation function for real-time live score computation
+const evaluateQuizAnswers = (quiz: Quiz, answers: Record<string, any>) => {
+  let totalScore = 0;
+  let totalCorrect = 0;
+  let totalWrong = 0;
+  let totalSkipped = 0;
+
+  const sectionMap = new Map((quiz.sections || []).map((s) => [s.id, s]));
+  const calculatedSummaries: Record<string, SectionSummary> = {};
+  const calculatedDetails: Record<string, QuestionScoreDetail> = {};
+
+  (quiz.sections || []).forEach((sec) => {
+    calculatedSummaries[sec.id] = {
+      sectionId: sec.id,
+      sectionName: sec.name,
+      earnedMarks: 0,
+      maxMarks: 0,
+      correct: 0,
+      wrong: 0,
+      skipped: 0
+    };
+  });
+
+  quiz.questions.forEach((q) => {
+    const qSection = q.sectionId ? sectionMap.get(q.sectionId) : undefined;
+    const isNegativeEnabled = qSection?.negativeMarkingEnabled ?? true;
+    const penalty = isNegativeEnabled ? (qSection?.negativeMarking || 0) : 0;
+    const qMarks = q.marks !== undefined ? Number(q.marks) : 10;
+    const userAns = answers[q.id];
+
+    const secSummary = q.sectionId ? calculatedSummaries[q.sectionId] : undefined;
+    if (secSummary) {
+      secSummary.maxMarks += qMarks;
+    }
+
+    let qEarned = 0;
+    let qStatus: 'correct' | 'partial' | 'wrong' | 'skipped' = 'skipped';
+    let blankFlags: boolean[] | undefined = undefined;
+
+    if (q.type === 'multi_fib') {
+      const correctList = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
+      const studentList = Array.isArray(userAns) ? userAns : [];
+      const blanksCount = correctList.length || 1;
+      const markPerBlank = qMarks / blanksCount;
+
+      let blanksMatched = 0;
+      let attempted = false;
+      blankFlags = [];
+
+      correctList.forEach((corr, bIdx) => {
+        const sVal = String(studentList[bIdx] || '').trim().toLowerCase();
+        if (sVal.length > 0) attempted = true;
+        const isMatched = sVal === String(corr).trim().toLowerCase();
+        blankFlags!.push(isMatched);
+        if (isMatched) blanksMatched++;
+      });
+
+      if (blanksMatched === blanksCount) {
+        qEarned = qMarks;
+        qStatus = 'correct';
+        totalCorrect++;
+        if (secSummary) secSummary.correct++;
+      } else if (blanksMatched > 0) {
+        qEarned = Number((blanksMatched * markPerBlank).toFixed(2));
+        qStatus = 'partial';
+        totalCorrect++;
+        if (secSummary) secSummary.correct++;
+      } else if (attempted) {
+        qEarned = penalty > 0 ? -penalty : 0;
+        qStatus = 'wrong';
+        totalWrong++;
+        if (secSummary) secSummary.wrong++;
+      } else {
+        qStatus = 'skipped';
+        totalSkipped++;
+        if (secSummary) secSummary.skipped++;
+      }
+    } else if (q.type === 'fib') {
+      const studentText = String(userAns || '').trim().toLowerCase();
+      const expectedText = String(q.correctAnswer || '').trim().toLowerCase();
+
+      if (studentText.length > 0) {
+        if (studentText === expectedText) {
+          qEarned = qMarks;
+          qStatus = 'correct';
+          totalCorrect++;
+          if (secSummary) secSummary.correct++;
+        } else {
+          qEarned = penalty > 0 ? -penalty : 0;
+          qStatus = 'wrong';
+          totalWrong++;
+          if (secSummary) secSummary.wrong++;
+        }
+      } else {
+        qStatus = 'skipped';
+        totalSkipped++;
+        if (secSummary) secSummary.skipped++;
+      }
+    } else {
+      if (userAns !== undefined && userAns !== null) {
+        if (Number(userAns) === Number(q.correctAnswer)) {
+          qEarned = qMarks;
+          qStatus = 'correct';
+          totalCorrect++;
+          if (secSummary) secSummary.correct++;
+        } else {
+          qEarned = penalty > 0 ? -penalty : 0;
+          qStatus = 'wrong';
+          totalWrong++;
+          if (secSummary) secSummary.wrong++;
+        }
+      } else {
+        qStatus = 'skipped';
+        totalSkipped++;
+        if (secSummary) secSummary.skipped++;
+      }
+    }
+
+    totalScore += qEarned;
+    if (secSummary) {
+      secSummary.earnedMarks += qEarned;
+    }
+
+    calculatedDetails[q.id] = {
+      questionId: q.id,
+      earnedMarks: qEarned,
+      maxMarks: qMarks,
+      status: qStatus,
+      blankResults: blankFlags
+    };
+  });
+
+  return {
+    score: Math.max(0, Number(totalScore.toFixed(2))),
+    totalCorrect,
+    totalWrong,
+    totalSkipped,
+    sectionSummaries: calculatedSummaries,
+    questionDetails: calculatedDetails
+  };
+};
+
 export const StudentPortal: React.FC<StudentPortalProps> = ({ 
   quizId: propQuizId, 
   quizIdFromUrl, 
@@ -173,6 +315,10 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
   const [reviewFilter, setReviewFilter] = useState<'all' | 'correct' | 'wrong' | 'skipped'>('all');
   
   const [liveProctorWarning, setLiveProctorWarning] = useState<string | null>(null);
+
+  // 5-Second Stylish Thank You Screen States
+  const [showThankYou, setShowThankYou] = useState<boolean>(false);
+  const [thankYouCountdown, setThankYouCountdown] = useState<number>(5);
 
   const [answers, setAnswers] = useState<Record<string, any>>(() => {
     if (!resolvedQuizId) return {};
@@ -329,8 +475,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
               setIsJoined(true);
               setScore(pData.score || 0);
               setTimeTaken(pData.time_taken || 0);
-              if (pData.section_summaries) setSectionSummaries(pData.section_summaries);
-              if (pData.question_details) setQuestionDetails(pData.question_details);
             }
           }
         } catch (e) {}
@@ -339,6 +483,97 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
       console.error('Error loading quiz:', err);
     } finally {
       setLoadingQuiz(false);
+    }
+  };
+
+  // 5-Second Countdown trigger to stylish Thank You screen
+  useEffect(() => {
+    if (!isFinished || showThankYou) return;
+
+    const timer = setInterval(() => {
+      setThankYouCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          setShowThankYou(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [isFinished, showThankYou]);
+
+  // Transmit live score updates to host in real-time
+  const syncLiveProgress = (updatedAnswers: Record<string, any>) => {
+    if (!quiz || !resolvedQuizId) return;
+
+    const evalResult = evaluateQuizAnswers(quiz, updatedAnswers);
+    const elapsed = startedAtTimestamp ? Math.max(0, Math.floor((Date.now() - startedAtTimestamp) / 1000)) : timeTaken;
+
+    const liveParticipant: StudentResult = {
+      id: participantId,
+      name: name,
+      score: evalResult.score,
+      timeTakenSeconds: elapsed,
+      strikes: strikes,
+      status: 'Active',
+      violations: violations,
+      answers: updatedAnswers,
+      reviewFlags: reviewFlags,
+      sectionSummaries: evalResult.sectionSummaries,
+      questionDetails: evalResult.questionDetails,
+      totalCorrect: evalResult.totalCorrect,
+      totalWrong: evalResult.totalWrong,
+      totalSkipped: evalResult.totalSkipped,
+      submittedAt: new Date().toLocaleTimeString()
+    };
+
+    // 1. Instant Broadcast to Host
+    broadcastMessage({
+      type: 'PARTICIPANT_LIVE_UPDATE' as any,
+      quizId: resolvedQuizId,
+      participant: liveParticipant
+    });
+
+    // 2. Local Storage Sync
+    try {
+      const qKey = `quizguard_quiz_${resolvedQuizId}`;
+      const qRaw = localStorage.getItem(qKey);
+      if (qRaw) {
+        const qObj = JSON.parse(qRaw);
+        if (!qObj.participants) qObj.participants = {};
+        qObj.participants[participantId] = liveParticipant;
+        localStorage.setItem(qKey, JSON.stringify(qObj));
+      }
+
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('quizguard_host_quizzes_')) {
+          const list = JSON.parse(localStorage.getItem(key) || '[]');
+          const idx = list.findIndex((item: any) => item.id === resolvedQuizId);
+          if (idx >= 0) {
+            if (!list[idx].participants) list[idx].participants = {};
+            list[idx].participants[participantId] = liveParticipant;
+            localStorage.setItem(key, JSON.stringify(list));
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 3. Supabase Live Sync (safe standard columns)
+    if (supabase) {
+      supabase.from('participants').upsert({
+        id: participantId,
+        quiz_id: resolvedQuizId,
+        name: name,
+        score: evalResult.score,
+        time_taken: elapsed,
+        strikes: strikes,
+        status: 'Active',
+        violations: violations,
+        updated_at: new Date().toISOString()
+      }).then(() => {});
     }
   };
 
@@ -360,6 +595,8 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     setVisitedIndices({ 0: true });
     setCurrentIdx(0);
     setIsFinished(false);
+    setShowThankYou(false);
+    setThankYouCountdown(5);
     setIsJoined(false);
     setStartedAtTimestamp(null);
     setTotalSecondsLeft(totalDurationSec || 1200);
@@ -547,6 +784,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     const updated = { ...answers, [qId]: optIdx };
     setAnswers(updated);
     localStorage.setItem(`quizguard_answers_${resolvedQuizId}`, JSON.stringify(updated));
+    syncLiveProgress(updated);
   };
 
   const handleTextAnswer = (qId: string, val: string) => {
@@ -554,6 +792,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     const updated = { ...answers, [qId]: val };
     setAnswers(updated);
     localStorage.setItem(`quizguard_answers_${resolvedQuizId}`, JSON.stringify(updated));
+    syncLiveProgress(updated);
   };
 
   const handleMultiBlankAnswer = (qId: string, blankIdx: number, val: string) => {
@@ -563,6 +802,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     const updated = { ...answers, [qId]: currentList };
     setAnswers(updated);
     localStorage.setItem(`quizguard_answers_${resolvedQuizId}`, JSON.stringify(updated));
+    syncLiveProgress(updated);
   };
 
   const handleClearResponse = (qId: string) => {
@@ -571,6 +811,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     delete updated[qId];
     setAnswers(updated);
     localStorage.setItem(`quizguard_answers_${resolvedQuizId}`, JSON.stringify(updated));
+    syncLiveProgress(updated);
   };
 
   const toggleReviewFlag = (qId: string) => {
@@ -599,181 +840,50 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     }
   };
 
-  // Fixed Evaluation & Submission Handler
   const handleSubmit = async (forced = false) => {
     if (!quiz || isAssessmentStopped) return;
     setShowSubmitModal(false);
 
-    let totalScore = 0;
-    let totalCorrectCount = 0;
-    let totalWrongCount = 0;
-    let totalSkippedCount = 0;
-
-    const sectionMap = new Map((quiz.sections || []).map((s) => [s.id, s]));
-    const calculatedSummaries: Record<string, SectionSummary> = {};
-    const calculatedDetails: Record<string, QuestionScoreDetail> = {};
-
-    (quiz.sections || []).forEach((sec) => {
-      calculatedSummaries[sec.id] = {
-        sectionId: sec.id,
-        sectionName: sec.name,
-        earnedMarks: 0,
-        maxMarks: 0,
-        correct: 0,
-        wrong: 0,
-        skipped: 0
-      };
+    const evalResult = evaluateQuizAnswers(quiz, answers);
+    setScore(evalResult.score);
+    setSectionSummaries(evalResult.sectionSummaries);
+    setQuestionDetails(evalResult.questionDetails);
+    setOverallStats({ 
+      correct: evalResult.totalCorrect, 
+      wrong: evalResult.totalWrong, 
+      skipped: evalResult.totalSkipped 
     });
 
-    quiz.questions.forEach((q) => {
-      const qSection = q.sectionId ? sectionMap.get(q.sectionId) : undefined;
-      const isNegativeEnabled = qSection?.negativeMarkingEnabled ?? true;
-      const penalty = isNegativeEnabled ? (qSection?.negativeMarking || 0) : 0;
-      const qMarks = q.marks !== undefined ? Number(q.marks) : 10;
-      const userAns = answers[q.id];
-
-      const secSummary = q.sectionId ? calculatedSummaries[q.sectionId] : undefined;
-      if (secSummary) {
-        secSummary.maxMarks += qMarks;
-      }
-
-      let qEarned = 0;
-      let qStatus: 'correct' | 'partial' | 'wrong' | 'skipped' = 'skipped';
-      let blankFlags: boolean[] | undefined = undefined;
-
-      if (q.type === 'multi_fib') {
-        const correctList = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
-        const studentList = Array.isArray(userAns) ? userAns : [];
-        const blanksCount = correctList.length || 1;
-        const markPerBlank = qMarks / blanksCount;
-
-        let blanksMatched = 0;
-        let attempted = false;
-        blankFlags = [];
-
-        correctList.forEach((corr, bIdx) => {
-          const sVal = String(studentList[bIdx] || '').trim().toLowerCase();
-          if (sVal.length > 0) attempted = true;
-          const isMatched = sVal === String(corr).trim().toLowerCase();
-          blankFlags!.push(isMatched);
-          if (isMatched) blanksMatched++;
-        });
-
-        if (blanksMatched === blanksCount) {
-          qEarned = qMarks;
-          qStatus = 'correct';
-          totalCorrectCount++;
-          if (secSummary) secSummary.correct++;
-        } else if (blanksMatched > 0) {
-          qEarned = Number((blanksMatched * markPerBlank).toFixed(2));
-          qStatus = 'partial';
-          totalCorrectCount++;
-          if (secSummary) secSummary.correct++;
-        } else if (attempted) {
-          qEarned = penalty > 0 ? -penalty : 0;
-          qStatus = 'wrong';
-          totalWrongCount++;
-          if (secSummary) secSummary.wrong++;
-        } else {
-          qStatus = 'skipped';
-          totalSkippedCount++;
-          if (secSummary) secSummary.skipped++;
-        }
-      } else if (q.type === 'fib') {
-        const studentText = String(userAns || '').trim().toLowerCase();
-        const expectedText = String(q.correctAnswer || '').trim().toLowerCase();
-
-        if (studentText.length > 0) {
-          if (studentText === expectedText) {
-            qEarned = qMarks;
-            qStatus = 'correct';
-            totalCorrectCount++;
-            if (secSummary) secSummary.correct++;
-          } else {
-            qEarned = penalty > 0 ? -penalty : 0;
-            qStatus = 'wrong';
-            totalWrongCount++;
-            if (secSummary) secSummary.wrong++;
-          }
-        } else {
-          qStatus = 'skipped';
-          totalSkippedCount++;
-          if (secSummary) secSummary.skipped++;
-        }
-      } else {
-        if (userAns !== undefined && userAns !== null) {
-          if (Number(userAns) === Number(q.correctAnswer)) {
-            qEarned = qMarks;
-            qStatus = 'correct';
-            totalCorrectCount++;
-            if (secSummary) secSummary.correct++;
-          } else {
-            qEarned = penalty > 0 ? -penalty : 0;
-            qStatus = 'wrong';
-            totalWrongCount++;
-            if (secSummary) secSummary.wrong++;
-          }
-        } else {
-          qStatus = 'skipped';
-          totalSkippedCount++;
-          if (secSummary) secSummary.skipped++;
-        }
-      }
-
-      totalScore += qEarned;
-      if (secSummary) {
-        secSummary.earnedMarks += qEarned;
-      }
-
-      calculatedDetails[q.id] = {
-        questionId: q.id,
-        earnedMarks: qEarned,
-        maxMarks: qMarks,
-        status: qStatus,
-        blankResults: blankFlags
-      };
-    });
-
-    const finalScore = Math.max(0, Number(totalScore.toFixed(2)));
-    setScore(finalScore);
-    setSectionSummaries(calculatedSummaries);
-    setQuestionDetails(calculatedDetails);
-    setOverallStats({ correct: totalCorrectCount, wrong: totalWrongCount, skipped: totalSkippedCount });
     setIsFinished(true);
+    setThankYouCountdown(5);
     setIsAutoSubmitting(false);
-
-    // Embed evaluation inside answers object to guarantee schema compatibility
-    const enrichedAnswers = {
-      ...answers,
-      __evaluation: {
-        totalCorrect: totalCorrectCount,
-        totalWrong: totalWrongCount,
-        totalSkipped: totalSkippedCount,
-        sectionSummaries: calculatedSummaries,
-        questionDetails: calculatedDetails,
-        reviewFlags: reviewFlags
-      }
-    };
 
     const studentResultObj: StudentResult = {
       id: participantId,
       name: name,
-      score: finalScore,
+      score: evalResult.score,
       timeTakenSeconds: timeTaken,
       strikes: strikes,
       status: disqualified ? 'Disqualified' : 'Completed',
       violations: violations,
-      answers: enrichedAnswers,
+      answers: answers,
       reviewFlags: reviewFlags,
-      sectionSummaries: calculatedSummaries,
-      questionDetails: calculatedDetails,
-      totalCorrect: totalCorrectCount,
-      totalWrong: totalWrongCount,
-      totalSkipped: totalSkippedCount,
+      sectionSummaries: evalResult.sectionSummaries,
+      questionDetails: evalResult.questionDetails,
+      totalCorrect: evalResult.totalCorrect,
+      totalWrong: evalResult.totalWrong,
+      totalSkipped: evalResult.totalSkipped,
       submittedAt: new Date().toLocaleTimeString()
     };
 
-    // 1. Instant Local Storage Update (Reflects instantly on same machine)
+    // 1. Instant Broadcast to Host
+    broadcastMessage({
+      type: 'PARTICIPANT_SUBMITTED' as any,
+      quizId: resolvedQuizId,
+      participant: studentResultObj
+    });
+
+    // 2. Instant Local Storage Update
     try {
       const qKey = `quizguard_quiz_${resolvedQuizId}`;
       const qRaw = localStorage.getItem(qKey);
@@ -787,39 +897,29 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
         if (key && key.startsWith('quizguard_host_quizzes_')) {
-          try {
-            const list = JSON.parse(localStorage.getItem(key) || '[]');
-            const idx = list.findIndex((item: any) => item.id === resolvedQuizId);
-            if (idx >= 0) {
-              if (!list[idx].participants) list[idx].participants = {};
-              list[idx].participants[participantId] = studentResultObj;
-              localStorage.setItem(key, JSON.stringify(list));
-            }
-          } catch (e) {}
+          const list = JSON.parse(localStorage.getItem(key) || '[]');
+          const idx = list.findIndex((item: any) => item.id === resolvedQuizId);
+          if (idx >= 0) {
+            if (!list[idx].participants) list[idx].participants = {};
+            list[idx].participants[participantId] = studentResultObj;
+            localStorage.setItem(key, JSON.stringify(list));
+          }
         }
       }
     } catch (e) {}
 
-    // 2. Real-time Broadcast to Host Scoreboard
-    broadcastMessage({
-      type: 'PARTICIPANT_SUBMITTED' as any,
-      quizId: resolvedQuizId,
-      participant: studentResultObj
-    });
-
-    // 3. Supabase Upsert using only standard, verified table columns
+    // 3. Supabase Safe Upsert
     if (supabase && resolvedQuizId) {
       try {
         await supabase.from('participants').upsert({
           id: participantId,
           quiz_id: resolvedQuizId,
           name: name,
-          score: finalScore,
+          score: evalResult.score,
           time_taken: timeTaken,
           strikes: strikes,
           status: disqualified ? 'Disqualified' : 'Completed',
           violations: violations,
-          answers: enrichedAnswers,
           updated_at: new Date().toISOString()
         });
       } catch (err) {
@@ -885,7 +985,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     return (
       <div className={`max-w-md mx-auto my-12 p-8 border rounded-3xl text-center shadow-2xl ${cardCls}`}>
         <div className={`p-3 rounded-2xl w-fit mx-auto mb-4 border ${isLight ? 'bg-red-50 border-red-200' : 'bg-red-500/10 border-red-500/20'}`}>
-          <AlertOctagon className={`w-12 h-12 ${isLight ? 'text-red-600' : 'text-red-400'}`} />
+          <AlertOctagon className={`w-12 h-12 text-red-600` } />
         </div>
         <h2 className="text-2xl font-bold mb-2">Examination Concluded</h2>
         <p className={`text-xs mb-6 leading-relaxed ${textMuted}`}>
@@ -915,21 +1015,89 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     );
   }
 
+  // Stylish Thank You Celebration Card after 5 Seconds
+  if (isFinished && showThankYou) {
+    const totalMax = quiz.questions.reduce((sum, q) => sum + (q.marks || 10), 0);
+
+    return (
+      <div className="max-w-xl mx-auto my-12 p-8 sm:p-12 border rounded-3xl text-center shadow-2xl space-y-6 animate-fade-in relative overflow-hidden transition-colors"
+        style={{
+          background: isLight 
+            ? 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)' 
+            : 'linear-gradient(135deg, #0f172a 0%, #020617 100%)',
+          borderColor: isLight ? '#cbd5e1' : '#1e293b'
+        }}
+      >
+        <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white shadow-lg shadow-emerald-500/30 animate-bounce">
+          <Sparkles className="w-10 h-10" />
+        </div>
+
+        <div>
+          <span className="text-xs font-mono font-bold tracking-widest uppercase text-emerald-500 block mb-2">
+            Assessment Completed
+          </span>
+          <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 mb-2">
+            THANK YOU!
+          </h1>
+          <p className={`text-sm ${textMuted}`}>
+            Your answers have been securely evaluated and submitted to your institution.
+          </p>
+        </div>
+
+        <div className={`p-6 rounded-2xl border text-center space-y-2 ${subCardCls}`}>
+          <div className="flex justify-between items-center text-xs font-mono pb-2 border-b border-slate-700/40">
+            <span className={textMuted}>Candidate:</span>
+            <strong className={textPrimary}>{name}</strong>
+          </div>
+          <div className="flex justify-between items-center text-xs font-mono pb-2 border-b border-slate-700/40">
+            <span className={textMuted}>Total Evaluation Score:</span>
+            <strong className={`text-base ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>{score} / {totalMax} pts</strong>
+          </div>
+          <div className="flex justify-between items-center text-xs font-mono">
+            <span className={textMuted}>Completion Time:</span>
+            <strong className={textPrimary}>{Math.floor(timeTaken / 60)}m {timeTaken % 60}s</strong>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-center gap-3 pt-2">
+          <button
+            onClick={() => setShowThankYou(false)}
+            className={`w-full py-3 rounded-xl text-xs font-bold border transition ${buttonSecCls}`}
+          >
+            Review Detailed Answer Key
+          </button>
+          <button
+            onClick={handleRetakeExam}
+            className={`w-full py-3 text-white font-bold rounded-xl text-xs transition ${
+              isLight ? 'bg-blue-700 hover:bg-blue-800' : 'bg-cyan-600 hover:bg-cyan-500'
+            }`}
+          >
+            Retake Exam (Test Mode)
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Initial 5-Second Scorecard Screen
   if (isFinished) {
     const totalMax = quiz.questions.reduce((sum, q) => sum + (q.marks || 10), 0);
     const percentage = totalMax > 0 ? ((score / totalMax) * 100).toFixed(1) : '0';
 
-    const filteredQuestions = quiz.questions.filter((q) => {
-      const detail = questionDetails[q.id];
-      if (reviewFilter === 'all') return true;
-      if (reviewFilter === 'correct') return detail?.status === 'correct' || detail?.status === 'partial';
-      if (reviewFilter === 'wrong') return detail?.status === 'wrong';
-      if (reviewFilter === 'skipped') return detail?.status === 'skipped';
-      return true;
-    });
-
     return (
       <div className="max-w-4xl mx-auto my-8 space-y-8 animate-fade-in print:my-0 print:space-y-4">
+        {/* 5-Second Progress Notice Bar */}
+        <div className="p-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl text-center text-xs font-bold font-mono flex items-center justify-center gap-2 shadow-md">
+          <Sparkles className="w-4 h-4 animate-spin" />
+          <span>Showing results... Transitioning to Thank You screen in {thankYouCountdown}s</span>
+          <button 
+            onClick={() => setShowThankYou(true)}
+            className="underline ml-2 text-white/90 hover:text-white"
+          >
+            Skip now →
+          </button>
+        </div>
+
         <div className={`p-8 border rounded-3xl text-center shadow-2xl space-y-6 ${cardCls} print:shadow-none print:border-black print:p-4`}>
           <div className="flex justify-between items-center print:hidden">
             <span className={`text-xs font-mono uppercase font-bold tracking-widest ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>
@@ -977,16 +1145,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
               <span className={`text-xs block ${textMuted}`}>/ {overallStats.skipped} skipped</span>
             </div>
           </div>
-
-          <div className="pt-2 print:hidden">
-            <button
-              onClick={handleRetakeExam}
-              className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold border transition ${buttonSecCls}`}
-              title="Clear this attempt and retest from question 1"
-            >
-              <RefreshCw className="w-3.5 h-3.5" /> Retake Assessment (Test Mode)
-            </button>
-          </div>
         </div>
 
         {Object.keys(sectionSummaries).length > 0 && (
@@ -1020,155 +1178,11 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
             </div>
           </div>
         )}
-
-        <div className={`p-6 rounded-3xl border space-y-5 shadow-xl ${cardCls} print:shadow-none print:border-black`}>
-          <div className={`flex flex-wrap items-center justify-between gap-3 border-b pb-4 ${isLight ? 'border-slate-200' : 'border-slate-800'}`}>
-            <h3 className="text-base font-bold flex items-center gap-2">
-              <CheckCircle className={`w-5 h-5 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} /> Question-by-Question Review
-            </h3>
-
-            <div className={`flex items-center gap-1.5 p-1 rounded-xl border text-xs print:hidden ${subCardCls}`}>
-              <button
-                onClick={() => setReviewFilter('all')}
-                className={`px-3 py-1 rounded-lg font-bold transition ${
-                  reviewFilter === 'all' 
-                    ? (isLight ? 'bg-blue-700 text-white' : 'bg-cyan-600 text-white') 
-                    : textMuted
-                }`}
-              >
-                All ({quiz.questions.length})
-              </button>
-              <button
-                onClick={() => setReviewFilter('correct')}
-                className={`px-3 py-1 rounded-lg font-bold transition ${
-                  reviewFilter === 'correct' ? 'bg-emerald-600 text-white' : textMuted
-                }`}
-              >
-                Correct ({overallStats.correct})
-              </button>
-              <button
-                onClick={() => setReviewFilter('wrong')}
-                className={`px-3 py-1 rounded-lg font-bold transition ${
-                  reviewFilter === 'wrong' ? 'bg-rose-600 text-white' : textMuted
-                }`}
-              >
-                Penalized ({overallStats.wrong})
-              </button>
-              <button
-                onClick={() => setReviewFilter('skipped')}
-                className={`px-3 py-1 rounded-lg font-bold transition ${
-                  reviewFilter === 'skipped' ? 'bg-amber-600 text-white' : textMuted
-                }`}
-              >
-                Skipped ({overallStats.skipped})
-              </button>
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            {filteredQuestions.map((q) => {
-              const originalIndex = quiz.questions.findIndex((item) => item.id === q.id);
-              const userAns = answers[q.id];
-              const detail = questionDetails[q.id];
-              const sec = quiz.sections?.find((s) => s.id === q.sectionId);
-
-              let statusBadge = isLight ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-slate-800 text-slate-400 border-slate-700';
-              let statusLabel = 'Skipped';
-
-              if (detail?.status === 'correct') {
-                statusBadge = isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-emerald-950/60 text-emerald-400 border-emerald-800';
-                statusLabel = `Correct (+${detail.earnedMarks} pts)`;
-              } else if (detail?.status === 'partial') {
-                statusBadge = isLight ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-cyan-950/60 text-cyan-300 border-cyan-800';
-                statusLabel = `Partial (+${detail.earnedMarks} / ${detail.maxMarks} pts)`;
-              } else if (detail?.status === 'wrong') {
-                statusBadge = isLight ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-rose-950/60 text-rose-400 border-rose-800';
-                statusLabel = `Incorrect (${detail.earnedMarks} pts)`;
-              }
-
-              return (
-                <div key={q.id} className={`p-5 rounded-2xl border space-y-3 text-xs ${subCardCls} print:border-black`}>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className={`font-mono font-bold ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>Q{originalIndex + 1}</span>
-                      {sec && (
-                        <span className={`text-[10px] px-2 py-0.5 rounded font-mono font-bold border ${buttonSecCls}`}>
-                          {sec.name}
-                        </span>
-                      )}
-                      <span className={`uppercase text-[10px] px-2 py-0.5 rounded font-mono border ${buttonSecCls}`}>
-                        {q.type}
-                      </span>
-                    </div>
-
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-mono font-bold border ${statusBadge}`}>
-                      {statusLabel}
-                    </span>
-                  </div>
-
-                  <p className="text-sm font-semibold leading-relaxed">{q.text}</p>
-
-                  {q.type === 'multi_fib' && Array.isArray(q.correctAnswer) ? (
-                    <div className="space-y-2 pt-1 font-mono">
-                      <span className={`text-[11px] block font-bold ${textMuted}`}>Multi-Blank Breakdown:</span>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {q.correctAnswer.map((corr, bIdx) => {
-                          const sVal = Array.isArray(userAns) ? userAns[bIdx] : '';
-                          const isCorrect = detail?.blankResults ? detail.blankResults[bIdx] : false;
-                          return (
-                            <div key={bIdx} className={`p-2.5 rounded-xl border ${
-                              isCorrect 
-                                ? (isLight ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-emerald-950/20 border-emerald-900/40 text-emerald-300')
-                                : (isLight ? 'bg-white border-slate-200 text-slate-800' : 'bg-slate-900 border-slate-800 text-slate-300')
-                            }`}>
-                              <div className="flex justify-between items-center text-[11px] mb-1">
-                                <span className={`font-bold ${textMuted}`}>Blank {bIdx + 1}:</span>
-                                <span className="font-bold">{isCorrect ? '✓ Correct' : '✗ Incorrect'}</span>
-                              </div>
-                              <div className="text-[11px]">Your Entry: <strong className={isCorrect ? 'text-emerald-600' : 'text-rose-500'}>{sVal || '—'}</strong></div>
-                              <div className={`text-[11px] ${textMuted}`}>Answer Key: <strong className="text-emerald-600">{corr}</strong></div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1 font-mono">
-                      <div className={`p-3 rounded-xl border ${isLight ? 'bg-white border-slate-200' : 'bg-slate-900 border-slate-800'}`}>
-                        <span className={`text-[11px] block mb-0.5 ${textMuted}`}>Your Response:</span>
-                        <span className={detail?.status === 'correct' ? 'text-emerald-600 font-bold' : detail?.status === 'wrong' ? 'text-rose-500 font-bold' : `${textMuted} font-bold`}>
-                          {userAns !== undefined ? (q.type === 'mcq' ? q.options?.[userAns] : String(userAns)) : 'Skipped (No entry)'}
-                        </span>
-                      </div>
-
-                      <div className={`p-3 rounded-xl border ${isLight ? 'bg-white border-slate-200' : 'bg-slate-900 border-slate-800'}`}>
-                        <span className={`text-[11px] block mb-0.5 ${textMuted}`}>Correct Answer:</span>
-                        <span className="text-emerald-600 font-bold">
-                          {q.type === 'mcq' ? q.options?.[Number(q.correctAnswer)] : String(q.correctAnswer)}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  {q.explanation && (
-                    <div className={`p-3 rounded-xl border text-xs leading-relaxed flex items-start gap-2 ${
-                      isLight ? 'bg-blue-50/70 border-blue-200 text-slate-800' : 'bg-slate-900/60 border-slate-800 text-slate-300'
-                    }`}>
-                      <HelpCircle className={`w-4 h-4 shrink-0 mt-0.5 ${isLight ? 'text-blue-700' : 'text-cyan-400'}`} />
-                      <div>
-                        <strong className={isLight ? 'text-blue-800' : 'text-cyan-300'}>Explanation:</strong> {q.explanation}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
       </div>
     );
   }
 
+  // Join Exam Screen
   if (!isJoined) {
     return (
       <div className={`max-w-md mx-auto my-8 p-6 sm:p-8 border rounded-3xl shadow-2xl transition-colors ${
@@ -1368,7 +1382,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
             className={`px-4 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${
               activeSectionFilter === 'all'
                 ? (isLight ? 'bg-blue-700 text-white shadow-sm' : 'bg-cyan-600 text-white shadow-md')
-                : buttonSecCls
+                : (isLight ? 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100' : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white')
             }`}
           >
             All Sections ({quiz.questions.length}Q)
@@ -1388,7 +1402,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                 className={`px-4 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-2 ${
                   activeSectionFilter === sec.id || currentQ?.sectionId === sec.id
                     ? (isLight ? 'bg-blue-700 text-white shadow-sm' : 'bg-cyan-600 text-white shadow-md')
-                    : buttonSecCls
+                    : (isLight ? 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100' : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white')
                 }`}
               >
                 <span>{sec.name}</span>
@@ -1440,7 +1454,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
               <button
                 onClick={() => handleClearResponse(currentQ.id)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition ${
-                  isLight ? 'bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border-slate-200' : 'bg-slate-800 hover:bg-rose-950/40 text-slate-400 hover:text-rose-300 border-slate-700'
+                  isLight ? 'bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-600 border-slate-200' : 'bg-slate-800 hover:bg-rose-950/40 border-slate-700 hover:border-rose-500/40 text-slate-400 hover:text-rose-300'
                 }`}
               >
                 <RotateCcw className="w-3.5 h-3.5" /> Clear Response
@@ -1608,9 +1622,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                           ? 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200' 
                           : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-500';
 
-                        if (status === 'answered') badgeColor = 'bg-emerald-600 text-white border-emerald-600 shadow-sm';
-                        else if (status === 'review') badgeColor = 'bg-purple-600 text-white border-purple-600 shadow-sm';
-                        else if (status === 'answered_review') badgeColor = 'bg-purple-600 text-white border-purple-600 ring-2 ring-emerald-400';
+                        if (status === 'answered') badgeColor = 'bg-emerald-600 text-white border-emerald-500 shadow-sm';
+                        else if (status === 'review') badgeColor = 'bg-purple-600 text-white border-purple-500 shadow-sm';
+                        else if (status === 'answered_review') badgeColor = 'bg-purple-600 text-white border-purple-500 ring-2 ring-emerald-400';
                         else if (status === 'skipped') badgeColor = 'bg-amber-600 text-white border-amber-500';
 
                         return (
@@ -1638,6 +1652,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
         </div>
       </div>
 
+      {/* Confirmation Pre-Submit Modal */}
       {showSubmitModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className={`max-w-lg w-full border p-6 sm:p-8 rounded-3xl space-y-6 shadow-2xl ${cardCls}`}>
