@@ -6,7 +6,8 @@ import {
   Shield, Plus, Copy, Check, ExternalLink, LogOut, Trash2, Users, 
   Clock, Palette, CheckCircle2, Lock, Mail, User, RefreshCw, StopCircle, 
   PlayCircle, Edit3, Award, Download, Layers, HelpCircle, AlertOctagon, Settings2, 
-  BarChart2, Trophy, Shuffle, Database, Search, FolderPlus, ArrowDownToLine, X
+  BarChart2, Trophy, Shuffle, Database, Search, FolderPlus, ArrowDownToLine, X,
+  FileEdit, ChevronLeft, ChevronRight
 } from 'lucide-react';
 
 interface HostProps {
@@ -40,6 +41,14 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [activeQuiz, setActiveQuiz] = useState<Quiz | null>(null);
 
+  // Saved Assessments Management (Edit / Search / 5-Item Pagination)
+  const [editingQuizId, setEditingQuizId] = useState<string | null>(null);
+  const [quizSearch, setQuizSearch] = useState<string>('');
+  const [quizPage, setQuizPage] = useState<number>(1);
+
+  // Staged Question Editing
+  const [editingQuestionIndex, setEditingQuestionIndex] = useState<number | null>(null);
+
   // Assessment Settings
   const [quizMode, setQuizMode] = useState<QuizMode>('marks_challenge');
   const [newTitle, setNewTitle] = useState('');
@@ -49,11 +58,11 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   const [sections, setSections] = useState<QuizSection[]>(DEFAULT_SECTIONS);
   const [showSectionConfig, setShowSectionConfig] = useState<boolean>(false);
 
-  // Stage 6 Randomization Settings
+  // Randomization Settings
   const [shuffleQuestions, setShuffleQuestions] = useState<boolean>(true);
   const [shuffleOptions, setShuffleOptions] = useState<boolean>(true);
 
-  // Stage 6 Question Bank States
+  // Question Bank States
   const [questionBank, setQuestionBank] = useState<QuestionBankItem[]>([]);
   const [isBankModalOpen, setIsBankModalOpen] = useState<boolean>(false);
   const [bankSearchQuery, setBankSearchQuery] = useState<string>('');
@@ -135,7 +144,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     setSections(sections.map(s => s.id === secId ? { ...s, negativeMarking: Math.max(0, val) } : s));
   };
 
-  // Stage 6 Bank Actions
+  // Bank Actions
   const addToBank = (q: Question) => {
     const bankItem: QuestionBankItem = {
       ...q,
@@ -269,7 +278,92 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     onLogout();
   };
 
-  const handleAddQuestion = (e: React.FormEvent) => {
+  // Edit / Cancel / Delete Saved Assessment
+  const handleEditSavedQuiz = (q: Quiz) => {
+    setEditingQuizId(q.id);
+    setNewTitle(q.title);
+    setQuizMode(q.mode || 'marks_challenge');
+    setTotalDurationMin(q.totalDurationMinutes || 20);
+    setSections(q.sections || DEFAULT_SECTIONS);
+    setSelectedTheme(q.theme);
+    setShuffleQuestions(q.shuffleQuestions ?? true);
+    setShuffleOptions(q.shuffleOptions ?? true);
+    setDraftQuestions([...q.questions]);
+    setEditingQuestionIndex(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleCancelQuizEdit = () => {
+    setEditingQuizId(null);
+    setNewTitle('');
+    setDraftQuestions([]);
+    setEditingQuestionIndex(null);
+  };
+
+  const handleDeleteSavedQuiz = async (quizId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!window.confirm('Are you sure you want to delete this saved assessment? This will remove its history.')) {
+      return;
+    }
+
+    const updated = quizzes.filter(q => q.id !== quizId);
+    setQuizzes(updated);
+    localStorage.setItem(`quizguard_host_quizzes_${hostEmail}`, JSON.stringify(updated));
+    localStorage.removeItem(`quizguard_quiz_${quizId}`);
+
+    if (editingQuizId === quizId) {
+      handleCancelQuizEdit();
+    }
+    if (activeQuiz?.id === quizId) {
+      setActiveQuiz(null);
+    }
+
+    if (supabase) {
+      try {
+        await supabase.from('quizzes').delete().eq('id', quizId);
+      } catch (err) {}
+    }
+  };
+
+  // Edit / Cancel Staged Question in Draft List
+  const handleEditDraftQuestion = (index: number) => {
+    const q = draftQuestions[index];
+    if (!q) return;
+
+    setEditingQuestionIndex(index);
+    setQType(q.type || 'mcq');
+    setQText(q.text);
+    setQExplanation(q.explanation || '');
+    if (q.sectionId) setSelectedSectionId(q.sectionId);
+    if (q.timeLimit) setQTimerClassic(q.timeLimit);
+    if (q.marks) setCustomClassicMarks(q.marks);
+
+    if (q.type === 'mcq') {
+      setOptA(q.options?.[0] || '');
+      setOptB(q.options?.[1] || '');
+      setOptC(q.options?.[2] || '');
+      setOptD(q.options?.[3] || '');
+      setCorrectOpt(Number(q.correctAnswer) || 0);
+    } else if (q.type === 'fib') {
+      setSingleFibAnswer(String(q.correctAnswer || ''));
+    } else if (q.type === 'multi_fib') {
+      const arr = Array.isArray(q.correctAnswer) ? q.correctAnswer : [];
+      setBlankCount(arr.length || 3);
+      setBlankAnswers(arr.length > 0 ? [...arr] : ['', '', '']);
+    }
+  };
+
+  const handleCancelQuestionEdit = () => {
+    setEditingQuestionIndex(null);
+    setQText('');
+    setOptA(''); setOptB(''); setOptC(''); setOptD('');
+    setCorrectOpt(0);
+    setSingleFibAnswer('');
+    setBlankAnswers(['', '', '']);
+    setQExplanation('');
+  };
+
+  const handleAddOrUpdateQuestion = (e: React.FormEvent) => {
     e.preventDefault();
     if (!qText.trim()) {
       alert('Please enter question text.');
@@ -281,39 +375,36 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
       ? (currentSection ? currentSection.marksPerQuestion : 3) 
       : customClassicMarks;
 
-    let newQ: Question;
+    let targetQuestion: Question;
 
     if (qType === 'mcq') {
       if (!optA.trim() || !optB.trim() || !optC.trim() || !optD.trim()) {
         alert('Please fill out all 4 options.');
         return;
       }
-      newQ = {
-        id: `q_${Date.now()}`,
+      targetQuestion = {
+        id: editingQuestionIndex !== null ? draftQuestions[editingQuestionIndex].id : `q_${Date.now()}`,
         sectionId: quizMode === 'marks_challenge' ? selectedSectionId : undefined,
         type: 'mcq',
-        text: qText,
-        options: [optA, optB, optC, optD],
+        text: qText.trim(),
+        options: [optA.trim(), optB.trim(), optC.trim(), optD.trim()],
         correctAnswer: correctOpt,
         marks: marksAssigned,
         timeLimit: qTimerClassic,
         explanation: qExplanation.trim(),
       };
-      setOptA('');
-      setOptB('');
-      setOptC('');
-      setOptD('');
+      setOptA(''); setOptB(''); setOptC(''); setOptD('');
       setCorrectOpt(0);
     } else if (qType === 'fib') {
       if (!singleFibAnswer.trim()) {
         alert('Please enter expected correct answer.');
         return;
       }
-      newQ = {
-        id: `q_${Date.now()}`,
+      targetQuestion = {
+        id: editingQuestionIndex !== null ? draftQuestions[editingQuestionIndex].id : `q_${Date.now()}`,
         sectionId: quizMode === 'marks_challenge' ? selectedSectionId : undefined,
         type: 'fib',
-        text: qText,
+        text: qText.trim(),
         correctAnswer: singleFibAnswer.trim(),
         marks: marksAssigned,
         timeLimit: qTimerClassic,
@@ -325,11 +416,11 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
         alert('Please fill out answers for all blanks.');
         return;
       }
-      newQ = {
-        id: `q_${Date.now()}`,
+      targetQuestion = {
+        id: editingQuestionIndex !== null ? draftQuestions[editingQuestionIndex].id : `q_${Date.now()}`,
         sectionId: quizMode === 'marks_challenge' ? selectedSectionId : undefined,
         type: 'multi_fib',
-        text: qText,
+        text: qText.trim(),
         correctAnswer: blankAnswers.map((a) => a.trim()),
         marks: marksAssigned,
         timeLimit: qTimerClassic,
@@ -339,19 +430,27 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     }
 
     if (saveAlsoToBank) {
-      addToBank(newQ);
+      addToBank(targetQuestion);
     }
 
-    setDraftQuestions([...draftQuestions, newQ]);
+    if (editingQuestionIndex !== null) {
+      const updated = [...draftQuestions];
+      updated[editingQuestionIndex] = targetQuestion;
+      setDraftQuestions(updated);
+      setEditingQuestionIndex(null);
+    } else {
+      setDraftQuestions([...draftQuestions, targetQuestion]);
+    }
+
     setQText('');
     setQExplanation('');
     setSaveAlsoToBank(false);
   };
 
-  const handleLaunchQuiz = async () => {
+  const handleLaunchOrUpdateQuiz = async () => {
     let currentDrafts = [...draftQuestions];
 
-    if (qText.trim()) {
+    if (qText.trim() && editingQuestionIndex === null) {
       const currentSection = sections.find((s) => s.id === selectedSectionId);
       const marksAssigned = quizMode === 'marks_challenge' 
         ? (currentSection ? currentSection.marksPerQuestion : 3) 
@@ -395,20 +494,23 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     }
 
     if (!newTitle.trim()) {
-      alert('Please enter an Assessment Title under "Assessment Launch Config" before launching.');
+      alert('Please enter an Assessment Title before launching.');
       return;
     }
 
     if (currentDrafts.length === 0) {
-      alert('Please add at least 1 question. Fill out the question builder or import from the Question Bank.');
+      alert('Please add at least 1 question to the assessment.');
       return;
     }
 
-    const newQuiz: Quiz = {
-      id: `quiz_${Date.now().toString(36)}`,
+    const quizId = editingQuizId || `quiz_${Date.now().toString(36)}`;
+    const existingQuiz = quizzes.find(q => q.id === editingQuizId);
+
+    const savedQuizObj: Quiz = {
+      id: quizId,
       hostEmail,
       title: newTitle.trim(),
-      createdAt: new Date().toLocaleString(),
+      createdAt: existingQuiz ? existingQuiz.createdAt : new Date().toLocaleString(),
       mode: quizMode,
       totalDurationMinutes: quizMode === 'marks_challenge' ? totalDurationMin : undefined,
       sections: quizMode === 'marks_challenge' ? sections : undefined,
@@ -418,15 +520,17 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
       theme: selectedTheme,
       questions: currentDrafts,
       status: 'live',
-      participants: {},
+      participants: existingQuiz ? existingQuiz.participants : {},
     };
 
-    localStorage.setItem(`quizguard_quiz_${newQuiz.id}`, JSON.stringify(newQuiz));
-    const updated = [newQuiz, ...quizzes.filter(q => q.id !== newQuiz.id)];
+    localStorage.setItem(`quizguard_quiz_${savedQuizObj.id}`, JSON.stringify(savedQuizObj));
+    const updated = quizzes.filter(q => q.id !== savedQuizObj.id);
+    updated.unshift(savedQuizObj);
     setQuizzes(updated);
     localStorage.setItem(`quizguard_host_quizzes_${hostEmail}`, JSON.stringify(updated));
 
-    setActiveQuiz(newQuiz);
+    setActiveQuiz(savedQuizObj);
+    setEditingQuizId(null);
     onThemeChange(selectedTheme);
     applyGlobalTheme(selectedTheme);
     setDraftQuestions([]);
@@ -436,9 +540,10 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     setSingleFibAnswer('');
     setBlankAnswers(['', '', '']);
     setQExplanation('');
+    setEditingQuestionIndex(null);
 
     try {
-      await saveQuiz(newQuiz);
+      await saveQuiz(savedQuizObj);
     } catch (err) {
       console.warn('Background sync note:', err);
     }
@@ -595,12 +700,16 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Filtered Question Bank Items
   const filteredBank = questionBank.filter(item => {
     const matchesSearch = item.text.toLowerCase().includes(bankSearchQuery.toLowerCase());
     const matchesType = bankTypeFilter === 'all' || item.type === bankTypeFilter;
     return matchesSearch && matchesType;
   });
+
+  // Filtered & Paginated Saved Quizzes (5 per page)
+  const filteredQuizzes = quizzes.filter(q => q.title.toLowerCase().includes(quizSearch.toLowerCase()));
+  const totalQuizPages = Math.ceil(filteredQuizzes.length / 5) || 1;
+  const paginatedQuizzes = filteredQuizzes.slice((quizPage - 1) * 5, quizPage * 5);
 
   if (!hostEmail) {
     return (
@@ -1092,6 +1201,22 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
         </div>
       </div>
 
+      {/* Editing Assessment Notice Banner */}
+      {editingQuizId && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex flex-wrap items-center justify-between gap-3 animate-fade-in">
+          <div className="flex items-center gap-2.5 text-amber-300 text-xs font-bold">
+            <FileEdit className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>Currently Editing Assessment: <strong className="text-white underline">{newTitle || 'Untitled'}</strong></span>
+          </div>
+          <button
+            onClick={handleCancelQuizEdit}
+            className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold border border-slate-700 transition"
+          >
+            Cancel Edit & Start New
+          </button>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-5">
@@ -1205,7 +1330,15 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
 
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
               <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                <Plus className="text-cyan-400 w-4 h-4" /> Add Question Content
+                {editingQuestionIndex !== null ? (
+                  <span className="text-amber-400 flex items-center gap-1.5">
+                    <Edit3 className="w-4 h-4" /> Edit Question #{editingQuestionIndex + 1}
+                  </span>
+                ) : (
+                  <span className="text-white flex items-center gap-1.5">
+                    <Plus className="text-cyan-400 w-4 h-4" /> Add Question Content
+                  </span>
+                )}
               </h2>
 
               <div className="flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
@@ -1239,7 +1372,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               </div>
             </div>
 
-            <form onSubmit={handleAddQuestion} className="space-y-4">
+            <form onSubmit={handleAddOrUpdateQuestion} className="space-y-4">
               <div>
                 <label className="text-xs text-slate-400 block mb-1 font-medium">Question Prompt</label>
                 <textarea
@@ -1401,9 +1534,20 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                   <span>Also save copy to Question Bank</span>
                 </label>
 
-                <button type="submit" className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs border border-slate-700 transition">
-                  + Append Question to Assessment
-                </button>
+                <div className="flex items-center gap-2">
+                  {editingQuestionIndex !== null && (
+                    <button
+                      type="button"
+                      onClick={handleCancelQuestionEdit}
+                      className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition border border-slate-700"
+                    >
+                      Cancel Edit
+                    </button>
+                  )}
+                  <button type="submit" className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs border border-slate-700 transition">
+                    {editingQuestionIndex !== null ? `? Update Question #${editingQuestionIndex + 1}` : '+ Append Question to Assessment'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
@@ -1428,8 +1572,15 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
 
             {draftQuestions.map((q, i) => {
               const sec = sections.find((s) => s.id === q.sectionId);
+              const isBeingEdited = editingQuestionIndex === i;
+
               return (
-                <div key={q.id} className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex items-center justify-between">
+                <div 
+                  key={q.id} 
+                  className={`bg-slate-900/60 border p-4 rounded-2xl flex items-center justify-between transition ${
+                    isBeingEdited ? 'border-amber-500/80 bg-amber-950/10 ring-1 ring-amber-500/40' : 'border-slate-800'
+                  }`}
+                >
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-cyan-400 font-mono">Q{i + 1}</span>
@@ -1444,18 +1595,30 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                       <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
                         {q.marks} Marks
                       </span>
+                      {isBeingEdited && (
+                        <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider font-mono">
+                          (Editing)
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm font-semibold text-white mt-1">{q.text}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
+                      onClick={() => handleEditDraftQuestion(i)}
+                      className="text-slate-400 hover:text-amber-400 p-2 transition"
+                      title="Edit this question"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </button>
+                    <button
                       onClick={() => { addToBank(q); alert('Saved to Question Bank!'); }}
-                      className="text-slate-400 hover:text-purple-300 p-2"
-                      title="Save to Bank"
+                      className="text-slate-400 hover:text-purple-300 p-2 transition"
+                      title="Save copy to Question Bank"
                     >
                       <Database className="w-4 h-4" />
                     </button>
-                    <button onClick={() => setDraftQuestions(draftQuestions.filter((_, idx) => idx !== i))} className="text-slate-500 hover:text-red-400 p-2">
+                    <button onClick={() => setDraftQuestions(draftQuestions.filter((_, idx) => idx !== i))} className="text-slate-500 hover:text-red-400 p-2 transition">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
@@ -1498,7 +1661,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               </div>
             )}
 
-            {/* Stage 6 Randomization Settings */}
             <div className="p-3.5 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-2.5">
               <span className="text-xs font-bold text-white flex items-center gap-1.5">
                 <Shuffle className="w-3.5 h-3.5 text-purple-400" /> Anti-Cheating Randomization
@@ -1544,36 +1706,112 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
             </div>
 
             <button
-              onClick={handleLaunchQuiz}
+              onClick={handleLaunchOrUpdateQuiz}
               type="button"
               className="w-full py-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white font-bold rounded-xl text-sm shadow-lg shadow-emerald-600/20 transition cursor-pointer"
             >
-              Launch Assessment & Generate Link
+              {editingQuizId ? 'Save & Update Assessment' : 'Launch Assessment & Generate Link'}
             </button>
           </div>
 
-          <div className="bg-slate-900/40 border border-slate-800 p-6 rounded-3xl space-y-3">
-            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Saved Assessments</h4>
-            {quizzes.map((q) => (
-              <div 
-                key={q.id} 
-                onClick={() => handleResumeAssessment(q)}
-                className="p-3 bg-slate-800/60 hover:bg-slate-800 rounded-xl cursor-pointer border border-slate-700/60 text-xs transition flex justify-between items-center"
-              >
-                <div>
-                  <span className="font-bold text-white block">{q.title}</span>
-                  <span className="text-slate-400">
-                    {q.questions.length} questions • {q.questions.reduce((sum, item) => sum + (item.marks || 10), 0)} pts • {Object.keys(q.participants || {}).length} attended
-                  </span>
+          {/* Clean 5-Item Paginated Saved Assessments Section with Search */}
+          <div className="bg-slate-900/40 border border-slate-800 p-6 rounded-3xl space-y-4">
+            <div className="flex justify-between items-center">
+              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                Saved Assessments ({quizzes.length})
+              </h4>
+              <span className="text-[10px] text-slate-500 font-mono">Max 5 shown</span>
+            </div>
+
+            {/* Real-Time Title Search */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                placeholder="Search assessments..."
+                value={quizSearch}
+                onChange={(e) => { setQuizSearch(e.target.value); setQuizPage(1); }}
+                className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+
+            {/* Display up to 5 Assessments */}
+            <div className="space-y-2.5">
+              {paginatedQuizzes.map((q) => (
+                <div 
+                  key={q.id}
+                  className="p-3 bg-slate-800/60 hover:bg-slate-800/90 rounded-2xl border border-slate-700/60 text-xs transition space-y-2"
+                >
+                  <div className="flex justify-between items-start gap-2">
+                    <div>
+                      <span className="font-bold text-white block truncate max-w-[190px]">{q.title}</span>
+                      <span className="text-[11px] text-slate-400 block font-mono">
+                        {q.questions.length}Q • {q.questions.reduce((sum, item) => sum + (item.marks || 10), 0)} pts • {Object.keys(q.participants || {}).length} attended
+                      </span>
+                    </div>
+
+                    {/* Action Buttons: Resume, Edit, Delete */}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        onClick={() => handleResumeAssessment(q)}
+                        className="px-2.5 py-1 bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-300 font-bold rounded-lg border border-cyan-500/30 transition text-[11px]"
+                        title="Open live telemetry & invitation link"
+                      >
+                        Open
+                      </button>
+                      <button
+                        onClick={() => handleEditSavedQuiz(q)}
+                        className="p-1.5 bg-slate-900 hover:bg-amber-500/20 text-slate-400 hover:text-amber-400 rounded-lg border border-slate-700/80 transition"
+                        title="Edit assessment questions and configuration"
+                      >
+                        <FileEdit className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteSavedQuiz(q.id, e)}
+                        className="p-1.5 bg-slate-900 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded-lg border border-slate-700/80 transition"
+                        title="Delete assessment permanently"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
-                <span className="text-cyan-400 font-bold">Open & Resume ?</span>
+              ))}
+
+              {filteredQuizzes.length === 0 && (
+                <p className="text-slate-500 text-xs font-mono py-6 text-center">
+                  {quizzes.length === 0 ? 'No saved assessments yet.' : 'No assessments match search.'}
+                </p>
+              )}
+            </div>
+
+            {/* Pagination Controls */}
+            {totalQuizPages > 1 && (
+              <div className="flex items-center justify-between pt-2 border-t border-slate-800/60 text-xs text-slate-400 font-mono">
+                <span>Page {quizPage} of {totalQuizPages}</span>
+                <div className="flex gap-1.5">
+                  <button
+                    disabled={quizPage === 1}
+                    onClick={() => setQuizPage(p => Math.max(1, p - 1))}
+                    className="p-1.5 bg-slate-950 disabled:opacity-30 hover:bg-slate-800 rounded-lg border border-slate-800 text-slate-300 transition"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    disabled={quizPage === totalQuizPages}
+                    onClick={() => setQuizPage(p => Math.min(totalQuizPages, p + 1))}
+                    className="p-1.5 bg-slate-950 disabled:opacity-30 hover:bg-slate-800 rounded-lg border border-slate-800 text-slate-300 transition"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
-            ))}
+            )}
           </div>
         </div>
       </div>
 
-      {/* Stage 6 Question Bank Modal Drawer */}
+      {/* Question Bank Modal Drawer */}
       {isBankModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="max-w-2xl w-full bg-slate-900 border border-slate-800 p-6 rounded-3xl space-y-5 shadow-2xl animate-fade-in max-h-[85vh] flex flex-col">
