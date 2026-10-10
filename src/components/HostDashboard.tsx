@@ -1,16 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { Quiz, Question, QuestionType, StudentResult, ThemeColor, THEME_CONFIG } from '../types';
+import { Quiz, Question, QuestionType, QuizMode, QuizSection, StudentResult, ThemeColor, THEME_CONFIG } from '../types';
 import { broadcastMessage, subscribeToMessages, saveQuiz, applyGlobalTheme, supabase } from '../supabase';
 import { PieChart } from './PieChart';
 import { 
   Shield, Plus, Copy, Check, ExternalLink, LogOut, Trash2, Users, 
-  Clock, Palette, CheckCircle2, Lock, Mail, User, RefreshCw, StopCircle, PlayCircle, Edit3
+  Clock, Palette, CheckCircle2, Lock, Mail, User, RefreshCw, StopCircle, 
+  PlayCircle, Edit3, Award, Download, Layers, HelpCircle
 } from 'lucide-react';
 
 interface HostProps {
   onLogout: () => void;
   onThemeChange: (theme: ThemeColor) => void;
 }
+
+const DEFAULT_SECTIONS: QuizSection[] = [
+  { id: 'sec_3m', name: 'Section A (3 Marks)', marksPerQuestion: 3, negativeMarking: 1 },
+  { id: 'sec_5m', name: 'Section B (5 Marks)', marksPerQuestion: 5, negativeMarking: 1 },
+  { id: 'sec_7m', name: 'Section C (7 Marks)', marksPerQuestion: 7, negativeMarking: 2 },
+  { id: 'sec_10m', name: 'Section D (10 Marks)', marksPerQuestion: 10, negativeMarking: 2 },
+];
 
 export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) => {
   const [hostEmail, setHostEmail] = useState<string>('');
@@ -30,11 +38,17 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
 
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [activeQuiz, setActiveQuiz] = useState<Quiz | null>(null);
+
+  // Assessment Settings
+  const [quizMode, setQuizMode] = useState<QuizMode>('marks_challenge');
   const [newTitle, setNewTitle] = useState('');
+  const [totalDurationMin, setTotalDurationMin] = useState<number>(20);
   const [pacingMode, setPacingMode] = useState<'manual' | 'auto'>('manual');
   const [selectedTheme, setSelectedTheme] = useState<ThemeColor>('slate');
+  const [sections, setSections] = useState<QuizSection[]>(DEFAULT_SECTIONS);
 
-  // Question Form States
+  // Question Builder States
+  const [selectedSectionId, setSelectedSectionId] = useState<string>('sec_3m');
   const [qType, setQType] = useState<QuestionType>('mcq');
   const [qText, setQText] = useState('');
   const [optA, setOptA] = useState('');
@@ -42,10 +56,16 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   const [optC, setOptC] = useState('');
   const [optD, setOptD] = useState('');
   const [correctOpt, setCorrectOpt] = useState<number>(0);
-  const [fibAnswer, setFibAnswer] = useState('');
-  const [qTimer, setQTimer] = useState<number>(30);
-  const [draftQuestions, setDraftQuestions] = useState<Question[]>([]);
+  const [singleFibAnswer, setSingleFibAnswer] = useState('');
+  
+  // Multi-blank state
+  const [blankCount, setBlankCount] = useState<number>(3);
+  const [blankAnswers, setBlankAnswers] = useState<string[]>(['', '', '']);
+  const [qExplanation, setQExplanation] = useState('');
+  const [qTimerClassic, setQTimerClassic] = useState<number>(60);
+  const [customClassicMarks, setCustomClassicMarks] = useState<number>(10);
 
+  const [draftQuestions, setDraftQuestions] = useState<Question[]>([]);
   const [copied, setCopied] = useState(false);
   const [inspectedStudent, setInspectedStudent] = useState<StudentResult | null>(null);
 
@@ -69,7 +89,21 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     }
   }, [hostEmail]);
 
-  // Real-time Cloud Sync: Poll Supabase for cross-device participants
+  // Adjust multi-blank inputs array
+  const handleBlankCountChange = (count: number) => {
+    setBlankCount(count);
+    const newArr = [...blankAnswers];
+    while (newArr.length < count) newArr.push('');
+    setBlankAnswers(newArr.slice(0, count));
+  };
+
+  const handleBlankAnswerChange = (index: number, val: string) => {
+    const updated = [...blankAnswers];
+    updated[index] = val;
+    setBlankAnswers(updated);
+  };
+
+  // Real-time Cloud Sync
   useEffect(() => {
     if (!activeQuiz || !supabase) return;
 
@@ -92,6 +126,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               id: p.id,
               name: p.name,
               score: p.score || 0,
+              timeTakenSeconds: p.time_taken || 0,
               strikes: p.strikes || 0,
               status: p.status || 'Active',
               violations: Array.isArray(vList) ? vList : [],
@@ -171,51 +206,76 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   const handleAddQuestion = (e: React.FormEvent) => {
     e.preventDefault();
     if (!qText.trim()) {
-      alert('Please fill out the question prompt.');
+      alert('Please enter the question text.');
       return;
     }
 
+    const currentSection = sections.find((s) => s.id === selectedSectionId);
+    const marksAssigned = quizMode === 'marks_challenge' 
+      ? (currentSection ? currentSection.marksPerQuestion : 3) 
+      : customClassicMarks;
+
+    let newQ: Question;
+
     if (qType === 'mcq') {
       if (!optA.trim() || !optB.trim() || !optC.trim() || !optD.trim()) {
-        alert('Please fill out all 4 multiple choice options.');
+        alert('Please fill out all 4 options.');
         return;
       }
-
-      const newQ: Question = {
+      newQ = {
         id: `q_${Date.now()}`,
+        sectionId: quizMode === 'marks_challenge' ? selectedSectionId : undefined,
         type: 'mcq',
         text: qText,
         options: [optA, optB, optC, optD],
         correctAnswer: correctOpt,
-        timeLimit: Number(qTimer) || 30,
+        marks: marksAssigned,
+        timeLimit: qTimerClassic,
+        explanation: qExplanation.trim(),
       };
-
-      setDraftQuestions([...draftQuestions, newQ]);
       setOptA('');
       setOptB('');
       setOptC('');
       setOptD('');
       setCorrectOpt(0);
-    } else {
-      if (!fibAnswer.trim()) {
-        alert('Please enter the expected correct answer for the blank.');
+    } else if (qType === 'fib') {
+      if (!singleFibAnswer.trim()) {
+        alert('Please enter the correct answer.');
         return;
       }
-
-      const newQ: Question = {
+      newQ = {
         id: `q_${Date.now()}`,
+        sectionId: quizMode === 'marks_challenge' ? selectedSectionId : undefined,
         type: 'fib',
         text: qText,
-        options: [],
-        correctAnswer: fibAnswer.trim(),
-        timeLimit: Number(qTimer) || 30,
+        correctAnswer: singleFibAnswer.trim(),
+        marks: marksAssigned,
+        timeLimit: qTimerClassic,
+        explanation: qExplanation.trim(),
       };
-
-      setDraftQuestions([...draftQuestions, newQ]);
-      setFibAnswer('');
+      setSingleFibAnswer('');
+    } else {
+      // multi_fib
+      if (blankAnswers.some((a) => !a.trim())) {
+        alert('Please provide answers for all the blanks.');
+        return;
+      }
+      newQ = {
+        id: `q_${Date.now()}`,
+        sectionId: quizMode === 'marks_challenge' ? selectedSectionId : undefined,
+        type: 'multi_fib',
+        text: qText,
+        correctAnswer: blankAnswers.map((a) => a.trim()),
+        marks: marksAssigned,
+        timeLimit: qTimerClassic,
+        explanation: qExplanation.trim(),
+      };
+      setBlankAnswers(['', '', '']);
     }
 
+    setDraftQuestions([...draftQuestions, newQ]);
     setQText('');
+    setQExplanation('');
   };
 
   const handleLaunchQuiz = async () => {
@@ -233,6 +293,9 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
       hostEmail,
       title: newTitle,
       createdAt: new Date().toLocaleString(),
+      mode: quizMode,
+      totalDurationMinutes: quizMode === 'marks_challenge' ? totalDurationMin : undefined,
+      sections: quizMode === 'marks_challenge' ? sections : undefined,
       pacingMode,
       theme: selectedTheme,
       questions: draftQuestions,
@@ -270,7 +333,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
 
   const handleStopAssessment = async () => {
     if (!activeQuiz) return;
-    if (!window.confirm('Are you sure you want to pause/stop this assessment? All connected participants will be halted.')) {
+    if (!window.confirm('Are you sure you want to stop this assessment? All connected participants will be halted.')) {
       return;
     }
 
@@ -341,8 +404,47 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
     }
   };
 
-  const handleOpenSavedQuiz = (q: Quiz) => {
-    handleResumeAssessment(q);
+  // CSV Export for Leaderboard Results
+  const exportResultsCSV = () => {
+    if (!activeQuiz) return;
+    const participants = Object.values(activeQuiz.participants || {});
+    if (participants.length === 0) {
+      alert('No participant submissions to export yet.');
+      return;
+    }
+
+    let csvContent = 'data:text/csv;charset=utf-8,';
+    csvContent += 'Rank,Team Name,Score,Time Taken (sec),Status,Strikes,Submission Date\n';
+
+    const sorted = [...participants].sort((a, b) => {
+      const aDisq = a.status === 'Disqualified';
+      const bDisq = b.status === 'Disqualified';
+      if (aDisq && !bDisq) return 1;
+      if (!aDisq && bDisq) return -1;
+      if (b.score !== a.score) return (b.score || 0) - (a.score || 0);
+      return (a.timeTakenSeconds || 0) - (b.timeTakenSeconds || 0);
+    });
+
+    sorted.forEach((p, index) => {
+      const row = [
+        index + 1,
+        `"${p.name.replace(/"/g, '""')}"`,
+        p.score,
+        p.timeTakenSeconds || 0,
+        p.status,
+        p.strikes,
+        p.submittedAt ? `"${p.submittedAt}"` : 'N/A'
+      ];
+      csvContent += row.join(',') + '\n';
+    });
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `${activeQuiz.title.replace(/\s+/g, '_')}_Results.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const shareableUrl = activeQuiz 
@@ -519,12 +621,16 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
   }
 
   if (activeQuiz) {
+    // Ranked by Score (Descending), then Time Taken (Ascending), Disqualified at bottom
     const participantsList = Object.values(activeQuiz.participants || {}).sort((a, b) => {
       const aDisq = a.status === 'Disqualified';
       const bDisq = b.status === 'Disqualified';
       if (aDisq && !bDisq) return 1;
       if (!aDisq && bDisq) return -1;
-      return (b.score || 0) - (a.score || 0);
+      if ((b.score || 0) !== (a.score || 0)) {
+        return (b.score || 0) - (a.score || 0);
+      }
+      return (a.timeTakenSeconds || 0) - (b.timeTakenSeconds || 0);
     });
     
     const completedCount = participantsList.filter(s => s.status === 'Completed').length;
@@ -537,7 +643,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
       { label: 'In Exam', value: activeCount, color: '#38bdf8' },
     ];
 
-    const totalMax = activeQuiz.questions.length * 10;
+    const totalMax = activeQuiz.questions.reduce((sum, q) => sum + (q.marks || 10), 0);
     const highScore = participantsList.filter(s => s.score >= totalMax * 0.8).length;
     const medScore = participantsList.filter(s => s.score >= totalMax * 0.5 && s.score < totalMax * 0.8).length;
     const lowScore = participantsList.filter(s => s.score < totalMax * 0.5).length;
@@ -559,14 +665,18 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               <span className={`text-xs font-mono uppercase tracking-wider font-bold ${isQuizEnded ? 'text-amber-400' : 'text-emerald-400'}`}>
                 {isQuizEnded ? 'Assessment Paused / Stopped' : 'Live Assessment Active'}
               </span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full font-mono uppercase bg-cyan-950 text-cyan-300 border border-cyan-800">
+                {activeQuiz.mode === 'marks_challenge' ? 'Marks Challenge (20 Min Total)' : 'Classic Mode'}
+              </span>
             </div>
             <h1 className="text-2xl font-black text-white mt-1">{activeQuiz.title}</h1>
             <p className="text-xs text-slate-400">
-              {activeQuiz.questions.length} Questions • Pacing: <span className="font-mono uppercase text-cyan-400">{activeQuiz.pacingMode}</span>
+              {activeQuiz.questions.length} Questions • Total Marks: <span className="font-mono text-cyan-400 font-bold">{totalMax} pts</span>
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            {/* Theme Selector */}
             <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-2xl border border-slate-800">
               <span className="text-xs text-slate-400 flex items-center gap-1.5 px-2">
                 <Palette className="w-3.5 h-3.5 text-cyan-400" /> Theme:
@@ -590,6 +700,16 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               ))}
             </div>
 
+            {/* CSV Export */}
+            <button
+              onClick={exportResultsCSV}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs border border-slate-700 transition"
+              title="Download results as CSV"
+            >
+              <Download className="w-4 h-4 text-cyan-400" /> Export CSV
+            </button>
+
+            {/* Stop or Resume Button */}
             {isQuizEnded ? (
               <button
                 onClick={() => handleResumeAssessment()}
@@ -655,29 +775,34 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
         <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-4">
           <div className="flex justify-between items-center">
             <h3 className="text-lg font-bold text-white flex items-center gap-2">
-              <Users className="w-5 h-5 text-cyan-400" /> Participant Telemetry & Audit ({participantsList.length})
+              <Users className="w-5 h-5 text-cyan-400" /> Leaderboard & Audit ({participantsList.length})
             </h3>
-            <span className="text-xs font-mono text-slate-400">Ranked by Score (Disqualified at end)</span>
+            <span className="text-xs font-mono text-slate-400">Ranked by Score • Tie-break: Time Taken</span>
           </div>
 
           <div className="overflow-x-auto rounded-2xl border border-slate-800">
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="bg-slate-950/80 text-slate-400 text-xs font-mono border-b border-slate-800">
-                  <th className="py-3 px-4">Candidate</th>
+                  <th className="py-3 px-4">Rank</th>
+                  <th className="py-3 px-4">Team Name</th>
                   <th className="py-3 px-4">Score</th>
+                  <th className="py-3 px-4">Time Taken</th>
                   <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4">Strikes</th>
-                  <th className="py-3 px-4">Proctor Audit Trail</th>
                   <th className="py-3 px-4 text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
-                {participantsList.map((s) => (
+                {participantsList.map((s, idx) => (
                   <tr key={s.id} className="hover:bg-slate-800/20 transition">
+                    <td className="py-3 px-4 font-mono font-bold text-cyan-400">#{idx + 1}</td>
                     <td className="py-3 px-4 font-semibold text-white">{s.name}</td>
                     <td className="py-3 px-4 font-mono font-bold text-cyan-400">
-                      {s.score} / {activeQuiz.questions.length * 10} pts
+                      {s.score} / {totalMax} pts
+                    </td>
+                    <td className="py-3 px-4 font-mono text-xs text-slate-300">
+                      {s.timeTakenSeconds ? `${Math.floor(s.timeTakenSeconds / 60)}m ${s.timeTakenSeconds % 60}s` : 'N/A'}
                     </td>
                     <td className="py-3 px-4">
                       <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
@@ -697,15 +822,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                         {s.strikes}/3 Strikes
                       </span>
                     </td>
-                    <td className="py-3 px-4 text-xs text-slate-400">
-                      {s.violations.length === 0 ? (
-                        <span className="text-emerald-400 flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" /> 100% Clean</span>
-                      ) : (
-                        <span className="text-red-400 font-mono">
-                          {s.violations.length} incidents logged
-                        </span>
-                      )}
-                    </td>
                     <td className="py-3 px-4 text-right">
                       <button 
                         onClick={() => setInspectedStudent(s)}
@@ -718,7 +834,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                 ))}
                 {participantsList.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="py-10 text-center text-slate-500 text-xs font-mono">
+                    <td colSpan={7} className="py-10 text-center text-slate-500 text-xs font-mono">
                       No candidate submissions yet. Share the invitation link above with participants.
                     </td>
                   </tr>
@@ -767,35 +883,95 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-6">
-          <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <Plus className="text-cyan-400 w-5 h-5" /> Add New Question
+          <div className="bg-slate-900/60 border border-slate-800 p-6 rounded-3xl space-y-5">
+            {/* Quiz Mode Selector */}
+            <div className="bg-slate-950 p-2 rounded-2xl border border-slate-800 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setQuizMode('marks_challenge')}
+                className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 ${
+                  quizMode === 'marks_challenge' 
+                    ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-lg shadow-cyan-600/20' 
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Award className="w-4 h-4" /> Marks Challenge (20 min total, 3M-10M Sections)
+              </button>
+              <button
+                type="button"
+                onClick={() => setQuizMode('classic')}
+                className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 ${
+                  quizMode === 'classic' 
+                    ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-lg shadow-cyan-600/20' 
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Clock className="w-4 h-4" /> Classic Mode (Per-Question Timer)
+              </button>
+            </div>
+
+            {/* Section Selector (Marks Challenge Only) */}
+            {quizMode === 'marks_challenge' && (
+              <div className="space-y-2">
+                <label className="text-xs text-slate-400 font-medium block flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5 text-cyan-400" /> Select Target Section for New Question:
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {sections.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => setSelectedSectionId(s.id)}
+                      className={`p-3 rounded-2xl border text-left transition ${
+                        selectedSectionId === s.id
+                          ? 'border-cyan-500 bg-cyan-950/30'
+                          : 'border-slate-800 bg-slate-950 hover:border-slate-700'
+                      }`}
+                    >
+                      <span className="text-xs font-bold text-white block">{s.name}</span>
+                      <span className="text-[11px] text-cyan-400 font-mono block">+{s.marksPerQuestion} Marks</span>
+                      <span className="text-[10px] text-rose-400 font-mono">
+                        {s.negativeMarking > 0 ? `-${s.negativeMarking} on Wrong` : 'No penalty'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Question Format Selector */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-800 pt-4">
+              <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                <Plus className="text-cyan-400 w-4 h-4" /> Construct Question
               </h2>
 
-              {/* Question Format Switcher */}
               <div className="flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
                 <button
                   type="button"
                   onClick={() => setQType('mcq')}
                   className={`px-3 py-1 text-xs font-bold rounded-lg transition ${
-                    qType === 'mcq'
-                      ? 'bg-cyan-600 text-white shadow'
-                      : 'text-slate-400 hover:text-white'
+                    qType === 'mcq' ? 'bg-cyan-600 text-white shadow' : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  Multiple Choice
+                  MCQ
                 </button>
                 <button
                   type="button"
                   onClick={() => setQType('fib')}
-                  className={`px-3 py-1 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
-                    qType === 'fib'
-                      ? 'bg-cyan-600 text-white shadow'
-                      : 'text-slate-400 hover:text-white'
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition ${
+                    qType === 'fib' ? 'bg-cyan-600 text-white shadow' : 'text-slate-400 hover:text-white'
                   }`}
                 >
-                  <Edit3 className="w-3.5 h-3.5" /> Fill in the Blanks
+                  Single Blank
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setQType('multi_fib')}
+                  className={`px-3 py-1 text-xs font-bold rounded-lg transition ${
+                    qType === 'multi_fib' ? 'bg-cyan-600 text-white shadow' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Multi-Blank (Partial Marks)
                 </button>
               </div>
             </div>
@@ -807,9 +983,9 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                   required
                   rows={2}
                   placeholder={
-                    qType === 'mcq' 
-                      ? "e.g. Which consensus mechanism avoids forks under network partition?" 
-                      : "e.g. The Byzantine Generals Problem is solved in distributed systems using ____ algorithm."
+                    qType === 'multi_fib'
+                      ? "e.g. In PBFT, the phases are: 1. [Blank 1], 2. [Blank 2], 3. [Blank 3]"
+                      : "e.g. What consensus algorithm guarantees finality in distributed systems?"
                   }
                   value={qText}
                   onChange={(e) => setQText(e.target.value)}
@@ -817,8 +993,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                 />
               </div>
 
-              {/* Conditional Inputs: MCQ vs Fill in the Blanks */}
-              {qType === 'mcq' ? (
+              {qType === 'mcq' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {[
                     { label: 'Option A', val: optA, set: setOptA, idx: 0 },
@@ -851,40 +1026,108 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
                     </div>
                   ))}
                 </div>
-              ) : (
+              )}
+
+              {qType === 'fib' && (
                 <div className="space-y-1.5 bg-slate-950/60 p-4 rounded-2xl border border-slate-800">
-                  <label className="text-xs text-cyan-300 font-medium block">
-                    Expected Correct Answer (Text)
-                  </label>
+                  <label className="text-xs text-cyan-300 font-medium block">Expected Answer (Case-Insensitive)</label>
                   <input
                     type="text"
                     required
-                    placeholder="e.g. PBFT (evaluation is case-insensitive)"
-                    value={fibAnswer}
-                    onChange={(e) => setFibAnswer(e.target.value)}
+                    placeholder="e.g. PBFT"
+                    value={singleFibAnswer}
+                    onChange={(e) => setSingleFibAnswer(e.target.value)}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:border-cyan-500"
                   />
+                </div>
+              )}
+
+              {qType === 'multi_fib' && (
+                <div className="space-y-3 bg-slate-950/60 p-4 rounded-2xl border border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-cyan-300 font-medium">Number of Blanks:</label>
+                    <div className="flex gap-2">
+                      {[2, 3, 4].map((cnt) => (
+                        <button
+                          key={cnt}
+                          type="button"
+                          onClick={() => handleBlankCountChange(cnt)}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold ${
+                            blankCount === cnt ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-400'
+                          }`}
+                        >
+                          {cnt} Blanks
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                    {blankAnswers.map((ans, idx) => (
+                      <div key={idx} className="space-y-1">
+                        <label className="text-xs text-slate-400">Blank {idx + 1} Correct Answer:</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder={`Answer for [Blank ${idx + 1}]`}
+                          value={ans}
+                          onChange={(e) => handleBlankAnswerChange(idx, e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+                    ))}
+                  </div>
                   <p className="text-[11px] text-slate-500">
-                    Participant responses will be evaluated automatically, ignoring extra spaces and letter casing.
+                    Partial marks will be awarded: each correct blank earns {((sections.find(s => s.id === selectedSectionId)?.marksPerQuestion || 10) / blankCount).toFixed(1)} marks.
                   </p>
                 </div>
               )}
 
-              <div className="flex items-center gap-3 pt-2">
-                <Clock className="w-4 h-4 text-cyan-400" />
-                <label className="text-xs text-slate-400 font-medium">Question Timer Limit:</label>
-                <select
-                  value={qTimer}
-                  onChange={(e) => setQTimer(Number(e.target.value))}
-                  className="px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs"
-                >
-                  <option value={15}>15 Seconds</option>
-                  <option value={30}>30 Seconds</option>
-                  <option value={45}>45 Seconds</option>
-                  <option value={60}>60 Seconds</option>
-                  <option value={90}>90 Seconds</option>
-                </select>
+              {/* Optional Answer Explanation */}
+              <div>
+                <label className="text-xs text-slate-400 block mb-1 font-medium flex items-center gap-1.5">
+                  <HelpCircle className="w-3.5 h-3.5 text-cyan-400" /> Explanation (Displayed to candidates after submit)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. PBFT tolerates up to (n-1)/3 Byzantine faulty nodes."
+                  value={qExplanation}
+                  onChange={(e) => setQExplanation(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-800/80 border border-slate-700 text-white text-xs focus:outline-none focus:border-cyan-500"
+                />
               </div>
+
+              {/* Classic Mode specific controls */}
+              {quizMode === 'classic' && (
+                <div className="flex flex-wrap items-center gap-5 pt-2">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-cyan-400" />
+                    <label className="text-xs text-slate-400 font-medium">Timer per Question:</label>
+                    <select
+                      value={qTimerClassic}
+                      onChange={(e) => setQTimerClassic(Number(e.target.value))}
+                      className="px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs"
+                    >
+                      <option value={30}>30s</option>
+                      <option value={60}>60s</option>
+                      <option value={90}>90s</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Award className="w-4 h-4 text-amber-400" />
+                    <label className="text-xs text-slate-400 font-medium">Marks:</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={customClassicMarks}
+                      onChange={(e) => setCustomClassicMarks(Math.max(1, Number(e.target.value)))}
+                      className="w-16 px-2.5 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs text-center font-bold focus:border-cyan-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
 
               <button type="submit" className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs border border-slate-700 transition">
                 + Append Question to Assessment
@@ -894,33 +1137,35 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
 
           <div className="space-y-3">
             <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">
-              Questions in Assessment ({draftQuestions.length})
+              Staged Questions ({draftQuestions.length})
             </h3>
-            {draftQuestions.map((q, i) => (
-              <div key={q.id} className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex items-center justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-cyan-400 font-mono">Q{i + 1} ({q.timeLimit}s)</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700">
-                      {q.type === 'fib' ? 'Fill in Blanks' : 'MCQ'}
-                    </span>
+            {draftQuestions.map((q, i) => {
+              const sec = sections.find((s) => s.id === q.sectionId);
+              return (
+                <div key={q.id} className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-cyan-400 font-mono">Q{i + 1}</span>
+                      {sec && (
+                        <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-800">
+                          {sec.name}
+                        </span>
+                      )}
+                      <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold uppercase bg-slate-800 text-slate-300 border border-slate-700">
+                        {q.type}
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                        {q.marks} Marks
+                      </span>
+                    </div>
+                    <p className="text-sm font-semibold text-white mt-1">{q.text}</p>
                   </div>
-                  <p className="text-sm font-semibold text-white mt-1">{q.text}</p>
-                  {q.type === 'fib' ? (
-                    <p className="text-xs text-emerald-400 font-mono mt-0.5">
-                      Answer: <span className="font-bold underline">{String(q.correctAnswer)}</span>
-                    </p>
-                  ) : (
-                    <p className="text-xs text-emerald-400 font-mono mt-0.5">
-                      Correct: Option {String.fromCharCode(65 + Number(q.correctAnswer))} ({q.options?.[Number(q.correctAnswer)]})
-                    </p>
-                  )}
+                  <button onClick={() => setDraftQuestions(draftQuestions.filter((_, idx) => idx !== i))} className="text-slate-500 hover:text-red-400 p-2">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
-                <button onClick={() => setDraftQuestions(draftQuestions.filter((_, idx) => idx !== i))} className="text-slate-500 hover:text-red-400 p-2">
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ))}
+              );
+            })}
             {draftQuestions.length === 0 && (
               <p className="text-xs text-slate-500 text-center py-6 border border-dashed border-slate-800 rounded-2xl font-mono">
                 No questions added yet. Use the form above to build questions.
@@ -936,27 +1181,29 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
               <label className="text-xs text-slate-400 block mb-1 font-medium">Assessment Title</label>
               <input
                 type="text"
-                placeholder="e.g. Distributed Consensus Exam"
+                placeholder="e.g. Distributed Consensus Marks Challenge"
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:border-cyan-500"
               />
             </div>
 
-            <div>
-              <label className="text-xs text-slate-400 block mb-1 font-medium">Pacing Mode</label>
-              <select
-                value={pacingMode}
-                onChange={(e) => setPacingMode(e.target.value as 'manual' | 'auto')}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm"
-              >
-                <option value="manual">Manual (Student navigates freely)</option>
-                <option value="auto">Automated (Per-question countdown auto-advances)</option>
-              </select>
-            </div>
+            {quizMode === 'marks_challenge' && (
+              <div>
+                <label className="text-xs text-slate-400 block mb-1 font-medium">Total Exam Duration (Minutes)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={180}
+                  value={totalDurationMin}
+                  onChange={(e) => setTotalDurationMin(Math.max(1, Number(e.target.value)))}
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:border-cyan-500 font-bold"
+                />
+              </div>
+            )}
 
             <div>
-              <label className="text-xs text-slate-400 block mb-1 font-medium">Initial Assessment Theme</label>
+              <label className="text-xs text-slate-400 block mb-1 font-medium">Assessment Theme</label>
               <select
                 value={selectedTheme}
                 onChange={(e) => setSelectedTheme(e.target.value as ThemeColor)}
@@ -971,9 +1218,9 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
             </div>
 
             <div className="p-3.5 bg-slate-950/60 rounded-xl border border-slate-800 text-xs text-slate-400 space-y-1">
+              <div>• Mode: <strong className="text-white capitalize">{quizMode.replace('_', ' ')}</strong></div>
               <div>• Questions Staged: <strong className="text-white">{draftQuestions.length}</strong></div>
-              <div>• 15s Color Rotation: <strong className="text-emerald-400">Silent Swapping Active</strong></div>
-              <div>• Proctoring Enforced: <strong className="text-cyan-400">Fullscreen + Tab Tracking</strong></div>
+              <div>• Total Marks: <strong className="text-amber-400">{draftQuestions.reduce((sum, q) => sum + (q.marks || 10), 0)} pts</strong></div>
             </div>
 
             <button
@@ -990,12 +1237,14 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange }) 
             {quizzes.map((q) => (
               <div 
                 key={q.id} 
-                onClick={() => handleOpenSavedQuiz(q)}
+                onClick={() => handleResumeAssessment(q)}
                 className="p-3 bg-slate-800/60 hover:bg-slate-800 rounded-xl cursor-pointer border border-slate-700/60 text-xs transition flex justify-between items-center"
               >
                 <div>
                   <span className="font-bold text-white block">{q.title}</span>
-                  <span className="text-slate-400">{q.questions.length} questions • {Object.keys(q.participants || {}).length} attended</span>
+                  <span className="text-slate-400">
+                    {q.questions.length} questions • {q.questions.reduce((sum, item) => sum + (item.marks || 10), 0)} pts • {Object.keys(q.participants || {}).length} attended
+                  </span>
                 </div>
                 <span className="text-cyan-400 font-bold">Open & Resume ?</span>
               </div>
