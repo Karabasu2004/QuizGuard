@@ -7,7 +7,7 @@ import {
   Clock, Palette, CheckCircle2, Lock, Mail, User, RefreshCw, StopCircle, 
   PlayCircle, Edit3, Award, Download, Layers, HelpCircle, AlertOctagon, Settings2, 
   BarChart2, Trophy, Shuffle, Database, Search, FolderPlus, ArrowDownToLine, X,
-  FileEdit, ChevronLeft, ChevronRight, Sun, Moon
+  FileEdit, ChevronLeft, ChevronRight, BellRing, UserCheck, ShieldAlert
 } from 'lucide-react';
 
 interface HostProps {
@@ -23,7 +23,7 @@ const DEFAULT_SECTIONS: QuizSection[] = [
   { id: 'sec_10m', name: 'Section D (10M)', marksPerQuestion: 10, negativeMarkingEnabled: true, negativeMarking: 2 },
 ];
 
-export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, isLight: propIsLight = true }) => {
+export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, isLight = true }) => {
   const [hostEmail, setHostEmail] = useState<string>('');
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
 
@@ -42,13 +42,18 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [activeQuiz, setActiveQuiz] = useState<Quiz | null>(null);
 
-  // Saved Assessments Management (Edit / Search / 5-Item Pagination)
+  // Saved Assessments Management
   const [editingQuizId, setEditingQuizId] = useState<string | null>(null);
   const [quizSearch, setQuizSearch] = useState<string>('');
   const [quizPage, setQuizPage] = useState<number>(1);
 
   // Staged Question Editing
   const [editingQuestionIndex, setEditingQuestionIndex] = useState<number | null>(null);
+
+  // Stage 7: Proctoring Console Warnings & Incidents
+  const [customWarningText, setCustomWarningText] = useState<string>('');
+  const [targetStudentForWarning, setTargetStudentForWarning] = useState<string | null>(null);
+  const [incidentLogs, setIncidentLogs] = useState<Array<{ timestamp: string; studentName: string; reason: string; strikes: number }>>([]);
 
   // Assessment Settings
   const [quizMode, setQuizMode] = useState<QuizMode>('marks_challenge');
@@ -91,9 +96,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
   const [copied, setCopied] = useState(false);
   const [inspectedStudent, setInspectedStudent] = useState<StudentResult | null>(null);
   const [inspectTab, setInspectTab] = useState<'audit' | 'sections'>('sections');
-
-  // Cohesive light/dark theme detector
-  const isLight = propIsLight;
 
   const refreshCaptcha = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -175,6 +177,27 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
     setDraftQuestions(prev => [...prev, newQ]);
   };
 
+  // Real-time Cloud Sync & Live Proctor Incident Feed
+  useEffect(() => {
+    if (!activeQuiz) return;
+
+    const unsubscribe = subscribeToMessages((msg: any) => {
+      if (msg.type === 'PARTICIPANT_INCIDENT' && msg.quizId === activeQuiz.id) {
+        setIncidentLogs(prev => [
+          {
+            timestamp: new Date().toLocaleTimeString(),
+            studentName: msg.name || 'Candidate',
+            reason: msg.reason,
+            strikes: msg.strikes
+          },
+          ...prev.slice(0, 19)
+        ]);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [activeQuiz?.id]);
+
   useEffect(() => {
     if (!activeQuiz || !supabase) return;
 
@@ -190,7 +213,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
           data.filter((p: any) => !p.id.startsWith('QUIZ_STATE_')).forEach((p: any) => {
             let vList = p.violations;
             if (typeof vList === 'string') {
-              try { vList = JSON.parse(vList); } catch (e) {}
+              try { vList = JSON.parse(vList); } catch (e) { vList = []; }
             }
 
             pMap[p.id] = {
@@ -221,6 +244,43 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
     const interval = setInterval(fetchLiveParticipants, 2000);
     return () => clearInterval(interval);
   }, [activeQuiz?.id]);
+
+  // Stage 7: Send Direct Proctor Warning
+  const handleSendProctorWarning = () => {
+    if (!activeQuiz || !customWarningText.trim()) return;
+
+    broadcastMessage({
+      type: 'PROCTOR_WARNING' as any,
+      quizId: activeQuiz.id,
+      targetParticipantId: targetStudentForWarning,
+      message: customWarningText.trim()
+    });
+
+    alert(targetStudentForWarning ? 'Direct warning transmitted to candidate!' : 'Broadcast warning displayed to all candidates!');
+    setCustomWarningText('');
+    setTargetStudentForWarning(null);
+  };
+
+  // Stage 7: Adjust Participant Strikes from Proctor Console
+  const handleAdjustStrikes = async (student: StudentResult, newStrikes: number) => {
+    if (!activeQuiz) return;
+    const clamped = Math.max(0, Math.min(3, newStrikes));
+    const newStatus = clamped >= 3 ? 'Disqualified' : 'Active';
+
+    if (supabase) {
+      await supabase.from('participants').update({
+        strikes: clamped,
+        status: newStatus
+      }).eq('id', student.id);
+    }
+
+    broadcastMessage({
+      type: 'PROCTOR_STRIKE_ADJUST' as any,
+      quizId: activeQuiz.id,
+      targetParticipantId: student.id,
+      newStrikes: clamped
+    });
+  };
 
   const handleRegister = (e: React.FormEvent) => {
     e.preventDefault();
@@ -524,7 +584,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
 
   const handleStopAssessment = async () => {
     if (!activeQuiz) return;
-    if (!window.confirm('Are you sure you want to stop this assessment? All connected participants will be halted.')) {
+    if (!window.confirm('Are you sure you want to conclude this assessment? All connected participants will be halted.')) {
       return;
     }
 
@@ -667,10 +727,9 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
   const totalQuizPages = Math.ceil(filteredQuizzes.length / 5) || 1;
   const paginatedQuizzes = filteredQuizzes.slice((quizPage - 1) * 5, quizPage * 5);
 
-  // Dynamic Theme Styling Classes
   const cardCls = isLight 
     ? 'bg-white border-slate-200 text-slate-900 shadow-sm' 
-    : 'bg-slate-900/60 border-slate-800 text-white';
+    : 'bg-slate-900 border-slate-800 text-white shadow-xl';
   
   const subCardCls = isLight 
     ? 'bg-slate-50 border-slate-200 text-slate-900' 
@@ -678,7 +737,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
 
   const inputCls = isLight 
     ? 'bg-white border-slate-300 text-slate-900 placeholder-slate-400 focus:border-blue-600 focus:ring-1 focus:ring-blue-600' 
-    : 'bg-slate-800/80 border-slate-700 text-white placeholder-slate-500 focus:border-cyan-500';
+    : 'bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:border-cyan-500';
 
   const textMuted = isLight ? 'text-slate-500' : 'text-slate-400';
   const textPrimary = isLight ? 'text-slate-900' : 'text-white';
@@ -891,7 +950,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
             <div className="flex items-center gap-2">
               <span className={`w-2.5 h-2.5 rounded-full ${isQuizEnded ? 'bg-amber-500' : 'bg-emerald-500 animate-ping'}`}></span>
               <span className={`text-xs font-mono uppercase tracking-wider font-bold ${isQuizEnded ? 'text-amber-600' : 'text-emerald-600'}`}>
-                {isQuizEnded ? 'Assessment Paused / Concluded' : 'Live Examination Active'}
+                {isQuizEnded ? 'Assessment Concluded' : 'Live Examination Active'}
               </span>
               <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono uppercase border font-bold ${
                 isLight ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-cyan-950 text-cyan-300 border-cyan-800'
@@ -941,7 +1000,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
           </div>
         </div>
 
-        {/* Candidate Invitation Link Banner */}
+        {/* Candidate Invitation Link */}
         <div className={`p-6 rounded-3xl border shadow-sm space-y-3 ${isLight ? 'bg-blue-50/60 border-blue-200' : 'bg-slate-900/80 border-cyan-500/30'}`}>
           <div className="flex items-center justify-between">
             <span className={`text-xs font-mono uppercase tracking-widest font-bold ${isLight ? 'text-blue-800' : 'text-cyan-400'}`}>
@@ -978,12 +1037,76 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
           </div>
         </div>
 
+        {/* Stage 7: Real-Time Proctor Console & Direct Warning Dispatcher */}
+        <div className={`p-6 rounded-3xl border space-y-5 ${cardCls}`}>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
+            <div>
+              <h3 className={`text-base font-bold flex items-center gap-2 ${textPrimary}`}>
+                <BellRing className="w-5 h-5 text-purple-600" /> Live Proctor Interventions & Announcements
+              </h3>
+              <p className={`text-xs ${textMuted}`}>Transmit direct warning banners to individual candidates or broadcast to the entire room.</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="md:col-span-2 space-y-2">
+              <label className={`text-xs font-bold block ${textMuted}`}>Warning or Notice Text:</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="e.g. Please look directly at your screen and exit all background apps."
+                  value={customWarningText}
+                  onChange={(e) => setCustomWarningText(e.target.value)}
+                  className={`flex-1 px-4 py-2.5 rounded-xl border text-xs focus:outline-none ${inputCls}`}
+                />
+                <button
+                  onClick={handleSendProctorWarning}
+                  className={`px-5 py-2.5 font-bold rounded-xl text-xs text-white transition ${
+                    isLight ? 'bg-blue-700 hover:bg-blue-800' : 'bg-purple-600 hover:bg-purple-500'
+                  }`}
+                >
+                  Dispatch Alert
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className={`text-xs font-bold block ${textMuted}`}>Target Candidate:</label>
+              <select
+                value={targetStudentForWarning || ''}
+                onChange={(e) => setTargetStudentForWarning(e.target.value ? e.target.value : null)}
+                className={`w-full px-3.5 py-2.5 rounded-xl border text-xs focus:outline-none ${inputCls}`}
+              >
+                <option value="">Broadcast to All Connected Candidates</option>
+                {participantsList.map(s => (
+                  <option key={s.id} value={s.id}>{s.name} ({s.strikes}/3 Strikes)</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Live Incident Stream */}
+          {incidentLogs.length > 0 && (
+            <div className={`p-4 rounded-2xl border space-y-2 text-xs font-mono ${subCardCls}`}>
+              <span className={`block font-bold ${textMuted}`}>Live Security Incident Stream:</span>
+              <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                {incidentLogs.map((log, idx) => (
+                  <div key={idx} className="flex justify-between items-center text-rose-500">
+                    <span>• [{log.timestamp}] <strong>{log.studentName}</strong>: {log.reason}</span>
+                    <span className="font-bold">({log.strikes}/3 Strikes)</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <PieChart title="Integrity Breakdown" data={statusChartData} isLight={isLight} />
           <PieChart title="Score Brackets" data={scoreChartData} isLight={isLight} />
         </div>
 
-        {/* Live Examination Leaderboard */}
+        {/* Live Examination Scoreboard */}
         <div className={`p-6 rounded-3xl border space-y-4 ${cardCls}`}>
           <div className="flex justify-between items-center">
             <h3 className={`text-lg font-bold flex items-center gap-2 ${textPrimary}`}>
@@ -1002,7 +1125,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
                   <th className="py-3 px-4">Time Taken</th>
                   <th className="py-3 px-4">Performance</th>
                   <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Strikes</th>
+                  <th className="py-3 px-4">Strikes Control</th>
                   <th className="py-3 px-4 text-right">Audit</th>
                 </tr>
               </thead>
@@ -1037,12 +1160,30 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
                         </span>
                       </td>
                       <td className="py-3 px-4">
-                        <span className={`font-mono font-bold px-2 py-0.5 rounded text-xs ${
-                          s.strikes === 0 ? (isLight ? 'bg-slate-100 text-slate-600' : 'bg-slate-800 text-slate-400') :
-                          s.strikes >= 3 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'
-                        }`}>
-                          {s.strikes}/3 Strikes
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleAdjustStrikes(s, s.strikes - 1)}
+                            disabled={s.strikes === 0}
+                            className={`px-1.5 py-0.5 rounded text-[10px] border disabled:opacity-30 ${buttonSecCls}`}
+                            title="Forgive strike"
+                          >
+                            -
+                          </button>
+                          <span className={`font-mono font-bold px-2 py-0.5 rounded text-xs ${
+                            s.strikes === 0 ? (isLight ? 'bg-slate-100 text-slate-600' : 'bg-slate-800 text-slate-400') :
+                            s.strikes >= 3 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {s.strikes}/3
+                          </span>
+                          <button
+                            onClick={() => handleAdjustStrikes(s, s.strikes + 1)}
+                            disabled={s.strikes >= 3}
+                            className={`px-1.5 py-0.5 rounded text-[10px] border disabled:opacity-30 ${buttonSecCls}`}
+                            title="Add manual strike"
+                          >
+                            +
+                          </button>
+                        </div>
                       </td>
                       <td className="py-3 px-4 text-right">
                         <button 
@@ -1138,7 +1279,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
 
   return (
     <div className="space-y-8 animate-fade-in">
-      {/* Studio Header Bar */}
       <div className={`flex flex-wrap items-center justify-between p-5 rounded-3xl border gap-4 ${cardCls}`}>
         <div>
           <h1 className={`text-xl font-bold ${textPrimary}`}>Faculty Assessment Studio</h1>
@@ -1159,7 +1299,6 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, onThemeChange, is
         </div>
       </div>
 
-      {/* Editing Quiz Banner */}
       {editingQuizId && (
         <div className={`p-4 rounded-2xl border flex flex-wrap items-center justify-between gap-3 ${isLight ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-amber-500/10 border-amber-500/30 text-amber-300'}`}>
           <div className="flex items-center gap-2.5 text-xs font-bold">
