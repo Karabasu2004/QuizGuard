@@ -135,7 +135,7 @@ export default function App() {
               }`}>
                 <GraduationCap className="w-8 h-8" />
               </div>
-              <h3 className={`text-xl font-bold mb-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>Faculty & Proctor Portal</h3>
+              <h2 className={`text-xl font-bold mb-2 ${isLight ? 'text-slate-900' : 'text-white'}`}>Faculty & Proctor Portal</h2>
               <p className={`text-xs mb-6 leading-relaxed ${isLight ? 'text-slate-600' : 'text-slate-400'}`}>
                 Sign in to construct sectional assessments, configure negative marking penalties, manage your Question Bank, and view real-time class leaderboards.
               </p>
@@ -166,7 +166,7 @@ export default function App() {
       <footer className={`border-t py-4 text-center text-xs ${
         isLight ? 'border-slate-200 bg-white text-slate-500' : 'border-slate-900 bg-slate-950 text-slate-600'
       }`}>
-        QuizGuard Assessment System • High-Integrity Academic Examination Portal
+        QuizGuard High-Integrity Academic Examination Portal
       </footer>
     </div>
   );
