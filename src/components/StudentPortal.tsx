@@ -1,15 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Quiz, Question, ThemeColor } from '../types';
+import { Quiz, Question, QuizSection, ThemeColor } from '../types';
 import { getSavedQuiz, applyGlobalTheme, subscribeToMessages, supabase } from '../supabase';
 import { 
   ShieldAlert, CheckCircle, AlertTriangle, Maximize, Clock, Trophy, 
-  AlertOctagon, Edit3, Award, Bookmark, Flag, ArrowRight, ArrowLeft, Loader2
+  AlertOctagon, Edit3, Award, Bookmark, Flag, ArrowRight, ArrowLeft, 
+  RotateCcw, Check, Layers, Loader2, Menu, X, CheckCircle2
 } from 'lucide-react';
 
 interface StudentPortalProps {
   quizId?: string;
   quizIdFromUrl?: string;
   onExit?: () => void;
+}
+
+interface StoredExamSession {
+  participantId: string;
+  name: string;
+  startedAt: number;
+  totalDurationSeconds: number;
 }
 
 export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId, quizIdFromUrl, onExit }) => {
@@ -22,20 +30,58 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     ? localStorage.getItem(`quizguard_disqualified_${resolvedQuizId}`) === 'true' 
     : false;
 
+  const getStoredSession = (): StoredExamSession | null => {
+    if (!resolvedQuizId) return null;
+    try {
+      const raw = localStorage.getItem(`quizguard_session_${resolvedQuizId}`);
+      if (raw) return JSON.parse(raw);
+      const oldStart = localStorage.getItem(`quizguard_start_time_${resolvedQuizId}`);
+      const oldPid = localStorage.getItem(`quizguard_pid_${resolvedQuizId}`);
+      const oldName = localStorage.getItem(`quizguard_name_${resolvedQuizId}`);
+      if (oldStart && oldPid) {
+        return {
+          participantId: oldPid,
+          name: oldName || '',
+          startedAt: Number(oldStart),
+          totalDurationSeconds: 1200
+        };
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  const initialSession = getStoredSession();
+
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [loadingQuiz, setLoadingQuiz] = useState<boolean>(true);
   const [name, setName] = useState<string>(() => {
+    if (initialSession?.name) return initialSession.name;
     return resolvedQuizId ? (localStorage.getItem(`quizguard_name_${resolvedQuizId}`) || '') : '';
   });
-  
-  const [isJoined, setIsJoined] = useState<boolean>(isAlreadyDisqualified);
+
+  const [isJoined, setIsJoined] = useState<boolean>(() => {
+    if (isAlreadyDisqualified) return true;
+    return !!initialSession?.startedAt;
+  });
+
   const [participantId] = useState<string>(() => {
+    if (initialSession?.participantId) return initialSession.participantId;
     const saved = resolvedQuizId ? localStorage.getItem(`quizguard_pid_${resolvedQuizId}`) : null;
     return saved || ('p_' + Math.random().toString(36).substring(2, 9));
   });
 
-  // Navigation and Responses
-  const [currentIdx, setCurrentIdx] = useState<number>(0);
+  // Stage 3: Question Index & Palette Visibility
+  const [currentIdx, setCurrentIdx] = useState<number>(() => {
+    if (!resolvedQuizId) return 0;
+    const saved = localStorage.getItem(`quizguard_current_idx_${resolvedQuizId}`);
+    return saved ? Number(saved) : 0;
+  });
+
+  const [isPaletteOpenMobile, setIsPaletteOpenMobile] = useState<boolean>(false);
+  const [activeSectionFilter, setActiveSectionFilter] = useState<string>('all');
+  
   const [answers, setAnswers] = useState<Record<string, any>>(() => {
     if (!resolvedQuizId) return {};
     try {
@@ -56,11 +102,26 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     }
   });
 
-  const [visitedIndices, setVisitedIndices] = useState<Record<number, boolean>>({ 0: true });
+  const [visitedIndices, setVisitedIndices] = useState<Record<number, boolean>>(() => {
+    if (!resolvedQuizId) return { 0: true };
+    try {
+      const saved = localStorage.getItem(`quizguard_visited_${resolvedQuizId}`);
+      return saved ? JSON.parse(saved) : { 0: true };
+    } catch (e) {
+      return { 0: true };
+    }
+  });
 
-  // Stage 2: Server-Anchored Timer States
-  const [startedAtTimestamp, setStartedAtTimestamp] = useState<number | null>(null);
-  const [totalSecondsLeft, setTotalSecondsLeft] = useState<number>(1200);
+  // Server-Anchored Timer State
+  const [startedAtTimestamp, setStartedAtTimestamp] = useState<number | null>(() => initialSession?.startedAt || null);
+  const [totalDurationSec, setTotalDurationSec] = useState<number>(() => initialSession?.totalDurationSeconds || 1200);
+
+  const [totalSecondsLeft, setTotalSecondsLeft] = useState<number>(() => {
+    if (!initialSession?.startedAt) return 1200;
+    const elapsed = Math.floor((Date.now() - initialSession.startedAt) / 1000);
+    return Math.max(0, (initialSession.totalDurationSeconds || 1200) - elapsed);
+  });
+
   const [isAutoSubmitting, setIsAutoSubmitting] = useState<boolean>(false);
   const hasAutoSubmitted = useRef<boolean>(false);
 
@@ -117,9 +178,20 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
       } else {
         setIsAssessmentStopped(false);
       }
+
+      const quizDurationSec = (loaded.mode === 'marks_challenge' 
+        ? (loaded.totalDurationMinutes || 20) 
+        : (loaded.questions?.length || 20) * 1) * 60;
+
+      setTotalDurationSec(quizDurationSec);
+
+      const currentSession = getStoredSession();
+      if (currentSession) {
+        currentSession.totalDurationSeconds = quizDurationSec;
+        localStorage.setItem(`quizguard_session_${id}`, JSON.stringify(currentSession));
+      }
     }
 
-    // Fetch participant record from Supabase to sync started_at and status
     if (supabase && participantId) {
       try {
         const { data: pData } = await supabase
@@ -141,30 +213,13 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
             setScore(pData.score || 0);
             setTimeTaken(pData.time_taken || 0);
           }
-
-          // Restore server started_at timestamp
-          if (pData.started_at) {
-            const serverStartMs = new Date(pData.started_at).getTime();
-            setStartedAtTimestamp(serverStartMs);
-            localStorage.setItem(`quizguard_start_time_${id}`, String(serverStartMs));
-            setIsJoined(true);
-          }
         }
       } catch (e) {}
-    }
-
-    // Fallback to local stored start time if Supabase has not yet loaded it
-    if (!startedAtTimestamp) {
-      const localStart = localStorage.getItem(`quizguard_start_time_${id}`);
-      if (localStart) {
-        setStartedAtTimestamp(Number(localStart));
-      }
     }
 
     setLoadingQuiz(false);
   };
 
-  // Real-time Stop / Resume Listener
   useEffect(() => {
     const unsubscribe = subscribeToMessages((msg: any) => {
       if (msg.type === 'THEME_CHANGE' && msg.theme) {
@@ -180,7 +235,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     return () => unsubscribe();
   }, [resolvedQuizId]);
 
-  // Anti-Cheat Listeners
   useEffect(() => {
     if (!isJoined || isFinished || disqualified || isAssessmentStopped) return;
 
@@ -240,37 +294,29 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     }
   };
 
-  // Stage 2: Server-Anchored Total Timer Engine with Auto-Submit
   useEffect(() => {
-    if (!isJoined || isFinished || disqualified || isAssessmentStopped || !quiz || !startedAtTimestamp) return;
+    if (!isJoined || isFinished || disqualified || isAssessmentStopped || !startedAtTimestamp) return;
 
-    const totalAllowedSec = (quiz.mode === 'marks_challenge' 
-      ? (quiz.totalDurationMinutes || 20) 
-      : (quiz.questions.length * 1)) * 60;
+    const computeTime = () => {
+      const elapsed = Math.max(0, Math.floor((Date.now() - startedAtTimestamp) / 1000));
+      const remaining = Math.max(0, totalDurationSec - elapsed);
+      setTotalSecondsLeft(remaining);
+      setTimeTaken(elapsed);
 
-    const timer = setInterval(() => {
-      const now = Date.now();
-      const elapsedSec = Math.max(0, Math.floor((now - startedAtTimestamp) / 1000));
-      const remainingSec = Math.max(0, totalAllowedSec - elapsedSec);
-
-      setTotalSecondsLeft(remainingSec);
-      setTimeTaken(elapsedSec);
-
-      // Auto-submit when time reaches zero
-      if (remainingSec <= 0 && !hasAutoSubmitted.current) {
+      if (remaining <= 0 && !hasAutoSubmitted.current) {
         hasAutoSubmitted.current = true;
-        clearInterval(timer);
         setIsAutoSubmitting(true);
         setTimeout(() => {
           handleSubmit(true);
-        }, 1200);
+        }, 1000);
       }
-    }, 1000);
+    };
 
-    return () => clearInterval(timer);
-  }, [isJoined, isFinished, disqualified, isAssessmentStopped, quiz, startedAtTimestamp]);
+    computeTime();
+    const interval = setInterval(computeTime, 1000);
+    return () => clearInterval(interval);
+  }, [isJoined, isFinished, disqualified, isAssessmentStopped, startedAtTimestamp, totalDurationSec]);
 
-  // Joining and Anchoring Start Timestamp
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
@@ -287,14 +333,24 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
       }
     } catch (e) {}
 
-    const nowMs = Date.now();
-    const nowIso = new Date(nowMs).toISOString();
+    const existing = getStoredSession();
+    const startMs = existing?.startedAt || Date.now();
+    const durationSec = totalDurationSec || 1200;
 
-    setStartedAtTimestamp(nowMs);
-    setIsJoined(true);
+    const newSession: StoredExamSession = {
+      participantId,
+      name,
+      startedAt: startMs,
+      totalDurationSeconds: durationSec
+    };
+
+    localStorage.setItem(`quizguard_session_${resolvedQuizId}`, JSON.stringify(newSession));
     localStorage.setItem(`quizguard_pid_${resolvedQuizId}`, participantId);
     localStorage.setItem(`quizguard_name_${resolvedQuizId}`, name);
-    localStorage.setItem(`quizguard_start_time_${resolvedQuizId}`, String(nowMs));
+    localStorage.setItem(`quizguard_start_time_${resolvedQuizId}`, String(startMs));
+
+    setStartedAtTimestamp(startMs);
+    setIsJoined(true);
 
     if (supabase && resolvedQuizId) {
       await supabase.from('participants').upsert({
@@ -305,12 +361,12 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
         strikes: 0,
         status: 'Active',
         violations: [],
-        started_at: nowIso,
-        updated_at: nowIso
+        updated_at: new Date().toISOString()
       });
     }
   };
 
+  // Stage 3 Question Navigation & Answers
   const handleSelectOption = (qId: string, optIdx: number) => {
     if (isAssessmentStopped || isAutoSubmitting) return;
     const updated = { ...answers, [qId]: optIdx };
@@ -334,6 +390,14 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     localStorage.setItem(`quizguard_answers_${resolvedQuizId}`, JSON.stringify(updated));
   };
 
+  const handleClearResponse = (qId: string) => {
+    if (isAutoSubmitting) return;
+    const updated = { ...answers };
+    delete updated[qId];
+    setAnswers(updated);
+    localStorage.setItem(`quizguard_answers_${resolvedQuizId}`, JSON.stringify(updated));
+  };
+
   const toggleReviewFlag = (qId: string) => {
     if (isAutoSubmitting) return;
     const updated = { ...reviewFlags, [qId]: !reviewFlags[qId] };
@@ -342,9 +406,22 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
   };
 
   const navigateTo = (index: number) => {
-    if (isAutoSubmitting) return;
+    if (isAutoSubmitting || !quiz) return;
     setCurrentIdx(index);
-    setVisitedIndices((prev) => ({ ...prev, [index]: true }));
+    localStorage.setItem(`quizguard_current_idx_${resolvedQuizId}`, String(index));
+
+    const updatedVisited = { ...visitedIndices, [index]: true };
+    setVisitedIndices(updatedVisited);
+    localStorage.setItem(`quizguard_visited_${resolvedQuizId}`, JSON.stringify(updatedVisited));
+
+    if (isPaletteOpenMobile) setIsPaletteOpenMobile(false);
+  };
+
+  const handleMarkReviewAndNext = (qId: string) => {
+    toggleReviewFlag(qId);
+    if (quiz && currentIdx < quiz.questions.length - 1) {
+      navigateTo(currentIdx + 1);
+    }
   };
 
   const handleSubmit = async (forced = false) => {
@@ -394,7 +471,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
           }
         }
       } else {
-        // MCQ
         if (userAns !== undefined && userAns !== null) {
           if (Number(userAns) === Number(q.correctAnswer)) {
             totalScore += qMarks;
@@ -431,7 +507,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
         <div className="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-4" />
-        <p className="text-slate-300 font-medium">Connecting to assessment...</p>
+        <p className="text-slate-300 font-medium">Connecting to live assessment...</p>
       </div>
     );
   }
@@ -479,7 +555,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
     );
   }
 
-  // Answer Review & Results Screen
   if (isFinished) {
     const totalMax = quiz.questions.reduce((sum, q) => sum + (q.marks || 10), 0);
 
@@ -555,13 +630,12 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
 
         <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl mb-6 text-left">
           <div className="flex items-center gap-2 text-amber-400 font-semibold text-xs mb-2">
-            <AlertTriangle className="w-4 h-4" /> Integrity & Timer Notice
+            <AlertTriangle className="w-4 h-4" /> CBT Guidelines
           </div>
           <ul className="text-xs text-amber-200/80 space-y-1 list-disc list-inside">
-            <li>The total exam timer starts as soon as you enter and cannot be paused or reset.</li>
-            <li>Tab switching, window minimization, or app blurring triggers a strike.</li>
-            <li>Exiting fullscreen triggers a strike (3 strikes = Disqualification).</li>
-            <li>At 00:00, your exam will auto-submit automatically.</li>
+            <li>The total exam timer starts as soon as you begin and does not reset on refresh.</li>
+            <li>Free navigation is enabled: use the Question Palette to jump between questions.</li>
+            <li>Exiting fullscreen or switching tabs triggers proctor strikes (3 strikes = Disqualification).</li>
           </ul>
         </div>
 
@@ -592,15 +666,18 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
   const sectionMap = new Map((quiz.sections || []).map((s) => [s.id, s]));
   const currentSec = currentQ.sectionId ? sectionMap.get(currentQ.sectionId) : undefined;
 
+  // 5 CBT States: Answered, Review, Answered & Review, Skipped, Not Visited
   const getQuestionStatus = (q: Question, idx: number) => {
-    const isAnswered = answers[q.id] !== undefined && (
-      Array.isArray(answers[q.id]) 
-        ? answers[q.id].some((v: string) => v && v.trim().length > 0)
-        : String(answers[q.id]).trim().length > 0
+    const val = answers[q.id];
+    const isAnswered = val !== undefined && val !== null && (
+      Array.isArray(val) 
+        ? val.some((v: string) => v && v.trim().length > 0)
+        : String(val).trim().length > 0
     );
     const isFlagged = !!reviewFlags[q.id];
     const isVisited = !!visitedIndices[idx];
 
+    if (isAnswered && isFlagged) return 'answered_review';
     if (isFlagged) return 'review';
     if (isAnswered) return 'answered';
     if (isVisited) return 'skipped';
@@ -614,24 +691,41 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
   const flaggedCount = Object.values(reviewFlags).filter(Boolean).length;
   const unansweredCount = quiz.questions.length - answeredCount;
 
-  // Visual Timer Styling
   const isTimerCritical = totalSecondsLeft <= 60;
   const isTimerWarning = totalSecondsLeft <= 300 && totalSecondsLeft > 60;
 
+  // Stage 3 Grouped Sections for Palette
+  const groupedSections: Record<string, { section?: QuizSection; questions: Array<{ q: Question; originalIdx: number }> }> = {};
+
+  if (quiz.sections && quiz.sections.length > 0) {
+    quiz.sections.forEach((sec) => {
+      groupedSections[sec.id] = { section: sec, questions: [] };
+    });
+    quiz.questions.forEach((q, idx) => {
+      const sId = q.sectionId || quiz.sections![0].id;
+      if (!groupedSections[sId]) groupedSections[sId] = { questions: [] };
+      groupedSections[sId].questions.push({ q, originalIdx: idx });
+    });
+  } else {
+    groupedSections['default'] = {
+      questions: quiz.questions.map((q, idx) => ({ q, originalIdx: idx }))
+    };
+  }
+
   return (
-    <div className="max-w-6xl mx-auto my-6 space-y-6 relative">
+    <div className="max-w-7xl mx-auto my-4 space-y-5 relative">
       {/* Auto-Submit Fullscreen Lockout Overlay */}
       {isAutoSubmitting && (
-        <div className="fixed inset-0 bg-black/90 z-50 flex flex-col items-center justify-center p-6 text-center animate-fade-in">
+        <div className="fixed inset-0 bg-black/90 z-50 flex flex-col items-center justify-center p-6 text-center">
           <div className="p-4 bg-rose-500/10 rounded-3xl border border-rose-500/30 mb-4 animate-bounce">
             <Clock className="w-12 h-12 text-rose-500" />
           </div>
           <h2 className="text-2xl font-black text-white mb-2">Time Expired!</h2>
           <p className="text-slate-400 text-sm max-w-sm mb-6">
-            The allotted exam timer has completed. Your responses are being recorded and submitted...
+            The exam timer has elapsed. Submitting all your responses automatically...
           </p>
           <div className="flex items-center gap-2 text-cyan-400 text-xs font-mono font-bold">
-            <Loader2 className="w-4 h-4 animate-spin" /> Finalizing assessment telemetry...
+            <Loader2 className="w-4 h-4 animate-spin" /> Recording final evaluation...
           </div>
         </div>
       )}
@@ -640,11 +734,11 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
       <div className="flex flex-wrap items-center justify-between bg-slate-900 border border-slate-800 p-4 rounded-3xl gap-4">
         <div>
           <h2 className="text-base font-bold text-white">{quiz.title}</h2>
-          <span className="text-xs text-slate-400 font-mono">Candidate: <strong className="text-cyan-300">{name}</strong></span>
+          <span className="text-xs text-slate-400 font-mono">Team: <strong className="text-cyan-300">{name}</strong></span>
         </div>
 
-        <div className="flex items-center gap-4">
-          {/* Stage 2 Hardened Countdown Badge */}
+        <div className="flex items-center gap-3 sm:gap-4">
+          {/* Server-Anchored Timer */}
           <div className={`flex items-center gap-2 px-4 py-2 rounded-2xl border font-mono text-sm font-bold transition-colors ${
             isTimerCritical 
               ? 'bg-rose-500/20 border-rose-500 text-rose-400 animate-pulse ring-2 ring-rose-500/30' 
@@ -656,19 +750,22 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
             <span>
               {Math.floor(totalSecondsLeft / 60).toString().padStart(2, '0')}:{(totalSecondsLeft % 60).toString().padStart(2, '0')}
             </span>
-            {isTimerCritical && (
-              <span className="text-[10px] uppercase tracking-wider text-rose-300 ml-1 font-bold">
-                (Final Minute)
-              </span>
-            )}
           </div>
 
-          {/* Strikes Counter */}
           <div className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold ${
             strikes > 0 ? 'bg-rose-500/20 text-rose-400' : 'bg-emerald-500/20 text-emerald-400'
           }`}>
             {strikes}/3 Strikes
           </div>
+
+          {/* Palette Mobile Drawer Button */}
+          <button
+            onClick={() => setIsPaletteOpenMobile(!isPaletteOpenMobile)}
+            className="lg:hidden p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700"
+            title="Toggle Question Palette"
+          >
+            {isPaletteOpenMobile ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+          </button>
 
           <button
             onClick={() => setShowSubmitModal(true)}
@@ -679,12 +776,56 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
         </div>
       </div>
 
+      {/* Stage 3 Section Quick-Jump Tabs */}
+      {quiz.sections && quiz.sections.length > 0 && (
+        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+          <button
+            onClick={() => setActiveSectionFilter('all')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap ${
+              activeSectionFilter === 'all'
+                ? 'bg-cyan-600 text-white shadow-md'
+                : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+            }`}
+          >
+            All Sections ({quiz.questions.length}Q)
+          </button>
+          {quiz.sections.map((sec) => {
+            const secQuestions = quiz.questions.filter((q) => q.sectionId === sec.id);
+            const firstIdx = quiz.questions.findIndex((q) => q.sectionId === sec.id);
+            const secAnswered = secQuestions.filter(q => {
+              const val = answers[q.id];
+              return val !== undefined && (Array.isArray(val) ? val.some(v => v && v.trim().length > 0) : String(val).trim().length > 0);
+            }).length;
+
+            return (
+              <button
+                key={sec.id}
+                onClick={() => {
+                  setActiveSectionFilter(sec.id);
+                  if (firstIdx !== -1) navigateTo(firstIdx);
+                }}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition whitespace-nowrap flex items-center gap-2 ${
+                  activeSectionFilter === sec.id || currentQ.sectionId === sec.id
+                    ? 'bg-cyan-600 text-white shadow-md'
+                    : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                <span>{sec.name}</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-black/40">
+                  {secAnswered}/{secQuestions.length} Done
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Interactive Question Canvas */}
         <div className="lg:col-span-2 space-y-5">
           <div className="bg-slate-900 border border-slate-800 p-6 sm:p-8 rounded-3xl shadow-xl space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-bold font-mono text-cyan-400 uppercase tracking-wider">
                   Question {currentIdx + 1} of {quiz.questions.length}
                 </span>
@@ -703,21 +844,19 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
                 )}
               </div>
 
+              {/* Clear Response Button */}
               <button
-                onClick={() => toggleReviewFlag(currentQ.id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition ${
-                  reviewFlags[currentQ.id]
-                    ? 'bg-purple-600/30 border-purple-500 text-purple-300'
-                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
-                }`}
+                onClick={() => handleClearResponse(currentQ.id)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-rose-950/40 border border-slate-700 hover:border-rose-500/40 text-slate-400 hover:text-rose-300 transition"
+                title="Clear entered answer for this question"
               >
-                <Flag className="w-3.5 h-3.5" />
-                {reviewFlags[currentQ.id] ? 'Flagged for Review' : 'Mark for Review'}
+                <RotateCcw className="w-3.5 h-3.5" /> Clear Response
               </button>
             </div>
 
             <h2 className="text-lg font-semibold text-white leading-relaxed">{currentQ.text}</h2>
 
+            {/* Answer Inputs based on Question Type */}
             {currentQ.type === 'multi_fib' ? (
               <div className="space-y-4 bg-slate-950 p-5 rounded-2xl border border-slate-800">
                 <span className="text-xs font-medium text-slate-400 block">Fill in all blanks:</span>
@@ -770,33 +909,50 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
               </div>
             )}
 
-            <div className="flex items-center justify-between pt-4 border-t border-slate-800">
-              <button
-                onClick={() => navigateTo(Math.max(0, currentIdx - 1))}
-                disabled={currentIdx === 0 || isAutoSubmitting}
-                className="flex items-center gap-1.5 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-300 rounded-xl text-xs font-bold transition"
-              >
-                <ArrowLeft className="w-4 h-4" /> Previous
-              </button>
+            {/* Stage 3 CBT Action Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-5 border-t border-slate-800">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => navigateTo(Math.max(0, currentIdx - 1))}
+                  disabled={currentIdx === 0 || isAutoSubmitting}
+                  className="flex items-center gap-1.5 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-300 rounded-xl text-xs font-bold transition"
+                >
+                  <ArrowLeft className="w-4 h-4" /> Previous
+                </button>
+
+                <button
+                  onClick={() => handleMarkReviewAndNext(currentQ.id)}
+                  disabled={isAutoSubmitting}
+                  className={`flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold border transition ${
+                    reviewFlags[currentQ.id]
+                      ? 'bg-purple-600/30 border-purple-500 text-purple-300'
+                      : 'bg-slate-800 border-slate-700 text-purple-300 hover:bg-slate-700'
+                  }`}
+                >
+                  <Flag className="w-3.5 h-3.5" />
+                  {reviewFlags[currentQ.id] ? 'Unmark & Next' : 'Mark Review & Next'}
+                </button>
+              </div>
 
               <button
                 onClick={() => navigateTo(Math.min(quiz.questions.length - 1, currentIdx + 1))}
                 disabled={currentIdx === quiz.questions.length - 1 || isAutoSubmitting}
-                className="flex items-center gap-1.5 px-5 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 disabled:opacity-30 text-white rounded-xl text-xs font-bold transition"
+                className="flex items-center gap-1.5 px-6 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 disabled:opacity-30 text-white rounded-xl text-xs font-bold transition shadow-md shadow-cyan-600/20"
               >
-                Next <ArrowRight className="w-4 h-4" />
+                Save & Next <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Question Palette */}
-        <div className="space-y-5">
+        {/* Right Column: Stage 3 Section-Grouped Palette */}
+        <div className={`space-y-5 ${isPaletteOpenMobile ? 'block' : 'hidden lg:block'}`}>
           <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl shadow-xl space-y-5">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <Bookmark className="w-4 h-4 text-cyan-400" /> Question Palette
             </h3>
 
+            {/* 5-State Color Legend */}
             <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-slate-400 border-b border-slate-800 pb-4">
               <div className="flex items-center gap-1.5">
                 <span className="w-3 h-3 rounded bg-emerald-500"></span> Answered ({answeredCount})
@@ -812,27 +968,53 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
               </div>
             </div>
 
-            <div className="grid grid-cols-5 gap-2 max-h-72 overflow-y-auto pr-1">
-              {quiz.questions.map((q, idx) => {
-                const status = getQuestionStatus(q, idx);
-                const isCurrent = currentIdx === idx;
+            {/* Grouped Palette Display */}
+            <div className="space-y-4 max-h-[420px] overflow-y-auto pr-1">
+              {Object.entries(groupedSections).map(([secId, group]) => {
+                if (group.questions.length === 0) return null;
+                if (activeSectionFilter !== 'all' && secId !== activeSectionFilter) return null;
 
-                let badgeColor = 'bg-slate-800 text-slate-400 border-slate-700';
-                if (status === 'answered') badgeColor = 'bg-emerald-600 text-white border-emerald-500';
-                else if (status === 'review') badgeColor = 'bg-purple-600 text-white border-purple-500';
-                else if (status === 'skipped') badgeColor = 'bg-amber-600 text-white border-amber-500';
+                const secAnswered = group.questions.filter(({ q }) => {
+                  const val = answers[q.id];
+                  return val !== undefined && (Array.isArray(val) ? val.some(v => v && v.trim().length > 0) : String(val).trim().length > 0);
+                }).length;
 
                 return (
-                  <button
-                    key={q.id}
-                    disabled={isAutoSubmitting}
-                    onClick={() => navigateTo(idx)}
-                    className={`h-10 rounded-xl border text-xs font-mono font-bold transition flex items-center justify-center relative ${badgeColor} ${
-                      isCurrent ? 'ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-900 scale-105' : ''
-                    }`}
-                  >
-                    {idx + 1}
-                  </button>
+                  <div key={secId} className="space-y-2 p-3 bg-slate-950/50 rounded-2xl border border-slate-800/80">
+                    <div className="flex justify-between items-center text-[11px] font-mono font-bold text-cyan-400">
+                      <span>{group.section ? group.section.name : 'Questions'}</span>
+                      <span className="text-[10px] text-slate-400">{secAnswered}/{group.questions.length} Attempted</span>
+                    </div>
+
+                    <div className="grid grid-cols-5 gap-2 pt-1">
+                      {group.questions.map(({ q, originalIdx }) => {
+                        const status = getQuestionStatus(q, originalIdx);
+                        const isCurrent = currentIdx === originalIdx;
+
+                        let badgeColor = 'bg-slate-800 text-slate-400 border-slate-700 hover:border-slate-500';
+                        if (status === 'answered') badgeColor = 'bg-emerald-600 text-white border-emerald-500 shadow-sm shadow-emerald-600/30';
+                        else if (status === 'review') badgeColor = 'bg-purple-600 text-white border-purple-500 shadow-sm shadow-purple-600/30';
+                        else if (status === 'answered_review') badgeColor = 'bg-purple-600 text-white border-purple-500 ring-2 ring-emerald-400';
+                        else if (status === 'skipped') badgeColor = 'bg-amber-600 text-white border-amber-500';
+
+                        return (
+                          <button
+                            key={q.id}
+                            disabled={isAutoSubmitting}
+                            onClick={() => navigateTo(originalIdx)}
+                            className={`h-10 rounded-xl border text-xs font-mono font-bold transition flex items-center justify-center relative ${badgeColor} ${
+                              isCurrent ? 'ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-900 scale-105' : ''
+                            }`}
+                          >
+                            {originalIdx + 1}
+                            {status === 'answered_review' && (
+                              <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-emerald-300 ring-1 ring-black"></span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 );
               })}
             </div>
@@ -846,7 +1028,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ quizId: propQuizId
           <div className="max-w-md w-full bg-slate-900 border border-slate-800 p-6 rounded-3xl space-y-5 shadow-2xl">
             <h3 className="text-lg font-bold text-white text-center">Confirm Assessment Submission</h3>
             <p className="text-xs text-slate-400 text-center">
-              Please review your question attempts before submitting:
+              Review your question attempts before final submission:
             </p>
 
             <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 grid grid-cols-3 gap-2 text-center text-xs font-mono">
