@@ -247,6 +247,11 @@ const evaluateQuizAnswers = (quiz: Quiz, answers: Record<string, any>) => {
 };
 
 export const StudentPortal: React.FC<StudentPortalProps> = ({
+  quizId: propQuizId, 
+  quizIdFromUrl, 
+  onExit, 
+  isLight = false 
+}) => {
   const [quizId, setQuizId] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -254,12 +259,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     }
     return '';
   });
- 
-  quizId: propQuizId, 
-  quizIdFromUrl, 
-  onExit, 
-  isLight = false 
-}) => {
+
   const [examStartTime, setExamStartTime] = useState<number>(() => Date.now());
   const [showResultScreen, setShowResultScreen] = useState<boolean>(false);
   const [showThankYouScreen, setShowThankYouScreen] = useState<boolean>(false);
