@@ -804,7 +804,87 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700';
 
   if (loadingQuiz) {
-    return (
+    useEffect(() => {
+    let active = true;
+
+    // Read quiz ID directly from URL if state is blank
+    const targetQuizId = quizId || new URLSearchParams(window.location.search).get('quiz') || '';
+    if (!targetQuizId) {
+      console.warn('[QuizGuard] No quiz parameter found in URL.');
+      setLoading(false);
+      return;
+    }
+
+    console.log('[QuizGuard] Loading assessment:', targetQuizId);
+
+    const loadAssessment = async () => {
+      try {
+        // 1. Try fetching from Supabase
+        if (typeof supabase !== 'undefined' && supabase) {
+          const { data, error } = await supabase
+            .from('quizzes')
+            .select('*')
+            .eq('id', targetQuizId)
+            .maybeSingle();
+
+          if (!error && data && active) {
+            console.log('[QuizGuard] Successfully loaded quiz from Supabase:', data.title || data.id);
+            setQuiz(data);
+            setLoading(false);
+            return;
+          }
+        }
+
+        // 2. Fallback to localStorage
+        const localDirect = localStorage.getItem(targetQuizId);
+        const localQuizzes = localStorage.getItem('quizzes');
+        let matchedQuiz = null;
+
+        if (localDirect) {
+          try { matchedQuiz = JSON.parse(localDirect); } catch(e){}
+        } else if (localQuizzes) {
+          try {
+            const list = JSON.parse(localQuizzes);
+            if (Array.isArray(list)) {
+              matchedQuiz = list.find((q: any) => q.id === targetQuizId);
+            }
+          } catch(e){}
+        }
+
+        if (matchedQuiz && active) {
+          console.log('[QuizGuard] Successfully loaded quiz from local storage fallback:', matchedQuiz.title || matchedQuiz.id);
+          setQuiz(matchedQuiz);
+          setLoading(false);
+          return;
+        }
+
+        console.warn('[QuizGuard] Quiz not found in database or local storage.');
+      } catch (err) {
+        console.error('[QuizGuard] Unexpected error while fetching quiz:', err);
+      } finally {
+        if (active) {
+          setLoading(false); // ALWAYS release loading screen
+        }
+      }
+    };
+
+    loadAssessment();
+
+    // 3. Watchdog timeout: release loading spinner after 4 seconds under all circumstances
+    const timeoutWatchdog = setTimeout(() => {
+      if (active) {
+        console.warn('[QuizGuard] Watchdog timeout triggered: releasing loader.');
+        setLoading(false);
+      }
+    }, 4000);
+
+    return () => {
+      active = false;
+      clearTimeout(timeoutWatchdog);
+    };
+  }, [quizId]);
+
+  return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
       {showResultScreen && !showThankYouScreen && (
         <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
