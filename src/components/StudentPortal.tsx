@@ -942,7 +942,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
         <div className={`p-4 rounded-2xl border text-left space-y-2 text-xs font-mono max-h-48 overflow-y-auto ${subCardCls}`}>
           <span className={`block font-bold mb-1 ${textMuted}`}>Recorded Proctor Violations:</span>
           {violations.map((v, i) => (
-            <div key={i} className={isLight ? 'text-rose-600' : 'text-rose-400'}>• [{v.timestamp}] {v.message}</div>
+            <div key={i} className={isLight ? 'text-rose-600' : 'text-rose-400'}>ï¿½ [{v.timestamp}] {v.message}</div>
           ))}
         </div>
       </div>
@@ -1073,7 +1073,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
           <div>
             <h2 className="text-2xl sm:text-3xl font-black">{quiz.title}</h2>
             <p className={`text-xs mt-1 font-mono ${textMuted}`}>
-              Candidate: <strong className={isLight ? 'text-blue-700' : 'text-cyan-300'}>{name}</strong> • Time Taken: {Math.floor(timeTaken / 60)}m {timeTaken % 60}s • ID: {participantId}
+              Candidate: <strong className={isLight ? 'text-blue-700' : 'text-cyan-300'}>{name}</strong> ï¿½ Time Taken: {Math.floor(timeTaken / 60)}m {timeTaken % 60}s ï¿½ ID: {participantId}
             </p>
           </div>
 
@@ -1124,7 +1124,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                       ? {sec.wrong}
                     </div>
                     <div className={`p-1 rounded border ${buttonSecCls}`}>
-                      — {sec.skipped}
+                      ï¿½ {sec.skipped}
                     </div>
                   </div>
                 </div>
@@ -1144,7 +1144,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
       }`}>
         <h2 className="text-xl font-bold mb-2">{quiz.title}</h2>
         <span className={`text-xs font-mono block mb-4 ${isLight ? 'text-blue-700 font-bold' : 'text-cyan-400'}`}>
-          {quiz.mode === 'marks_challenge' ? `Marks Challenge • ${quiz.totalDurationMinutes || 20} Minutes Total` : 'Classic Proctored Assessment'}
+          {quiz.mode === 'marks_challenge' ? `Marks Challenge ï¿½ ${quiz.totalDurationMinutes || 20} Minutes Total` : 'Classic Proctored Assessment'}
         </span>
 
         <div className={`p-4 rounded-xl mb-6 text-left border ${

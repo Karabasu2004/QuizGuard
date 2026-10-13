@@ -44,7 +44,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
 
   const [editingQuizId, setEditingQuizId] = useState<string | null>(null);
   const [quizSearch, setQuizSearch] = useState<string>('');
-  const [quizPage, setQuizPage] = useState<number>(1);
+  const [quizPage, setQuizPage] = useState<number>(2);
   const [editingQuestionIndex, setEditingQuestionIndex] = useState<number | null>(null);
 
   const [customWarningText, setCustomWarningText] = useState<string>('');
@@ -53,7 +53,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
 
   const [quizMode, setQuizMode] = useState<QuizMode>('marks_challenge');
   const [newTitle, setNewTitle] = useState('');
-  const [totalDurationMin, setTotalDurationMin] = useState<number>(20);
+  const [totalDurationMin, setTotalDurationMin] = useState<number>(2);
   const [pacingMode, setPacingMode] = useState<'manual' | 'auto'>('manual');
   const [sections, setSections] = useState<QuizSection[]>(DEFAULT_SECTIONS);
   const [showSectionConfig, setShowSectionConfig] = useState<boolean>(false);
@@ -73,14 +73,14 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
   const [optB, setOptB] = useState('');
   const [optC, setOptC] = useState('');
   const [optD, setOptD] = useState('');
-  const [correctOpt, setCorrectOpt] = useState<number>(0);
+  const [correctOpt, setCorrectOpt] = useState<number>(2);
   const [singleFibAnswer, setSingleFibAnswer] = useState('');
   
   const [blankCount, setBlankCount] = useState<number>(2);
   const [blankAnswers, setBlankAnswers] = useState<string[]>(['', '', '']);
   const [qExplanation, setQExplanation] = useState('');
-  const [qTimerClassic, setQTimerClassic] = useState<number>(60);
-  const [customClassicMarks, setCustomClassicMarks] = useState<number>(10);
+  const [qTimerClassic, setQTimerClassic] = useState<number>(2);
+  const [customClassicMarks, setCustomClassicMarks] = useState<number>(2);
   const [saveAlsoToBank, setSaveAlsoToBank] = useState<boolean>(false);
 
   const [draftQuestions, setDraftQuestions] = useState<Question[]>([]);
@@ -811,7 +811,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                 <input
                   type="password"
                   required
-                  placeholder="••••••••"
+                  placeholder="ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½"
                   value={loginPassword}
                   onChange={(e) => setLoginPassword(e.target.value)}
                   className={`w-full px-4 py-2.5 rounded-xl border text-sm focus:outline-none ${inputCls}`}
@@ -970,7 +970,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
             </div>
             <h1 className={`text-2xl font-black mt-1 ${textPrimary}`}>{activeQuiz.title}</h1>
             <p className={`text-xs ${textMuted}`}>
-              {activeQuiz.questions.length} Questions • Maximum Score: <span className={`font-mono font-bold ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>{totalMax} pts</span>
+              {activeQuiz.questions.length} Questions ï¿½ Maximum Score: <span className={`font-mono font-bold ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>{totalMax} pts</span>
             </p>
           </div>
 
@@ -1101,7 +1101,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
               <div className="space-y-1.5 max-h-36 overflow-y-auto">
                 {incidentLogs.map((log, idx) => (
                   <div key={idx} className="flex justify-between items-center text-rose-500">
-                    <span>• [{log.timestamp}] <strong>{log.studentName}</strong>: {log.reason}</span>
+                    <span>ï¿½ [{log.timestamp}] <strong>{log.studentName}</strong>: {log.reason}</span>
                     <span className="font-bold">({log.strikes}/3 Strikes)</span>
                   </div>
                 ))}
@@ -1121,7 +1121,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
             <h3 className={`text-lg font-bold flex items-center gap-2 ${textPrimary}`}>
               <Trophy className="w-5 h-5 text-amber-500" /> Examination Scoreboard ({participantsList.length})
             </h3>
-            <span className={`text-xs font-mono ${textMuted}`}>Ranked by Score • Tie-breaker: Time</span>
+            <span className={`text-xs font-mono ${textMuted}`}>Ranked by Score ï¿½ Tie-breaker: Time</span>
           </div>
 
           <div className={`overflow-x-auto rounded-2xl border ${isLight ? 'border-slate-200' : 'border-slate-800'}`}>
@@ -1237,7 +1237,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                 <div>
                   <h3 className={`text-lg font-bold ${textPrimary}`}>Candidate Audit: {inspectedStudent.name}</h3>
                   <span className={`text-xs font-mono ${textMuted}`}>
-                    Score: {inspectedStudent.score}/{totalMax} pts • Time: {Math.floor((inspectedStudent.timeTakenSeconds || 0) / 60)}m {(inspectedStudent.timeTakenSeconds || 0) % 60}s
+                    Score: {inspectedStudent.score}/{totalMax} pts ï¿½ Time: {Math.floor((inspectedStudent.timeTakenSeconds || 0) / 60)}m {(inspectedStudent.timeTakenSeconds || 0) % 60}s
                   </span>
                 </div>
                 <button onClick={() => setInspectedStudent(null)} className={`text-xs ${textMuted} hover:${textPrimary}`}>? Close</button>
@@ -1266,7 +1266,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                         <div>
                           <strong className={`block ${textPrimary}`}>{sec.sectionName}</strong>
                           <span className={`text-[11px] font-mono ${textMuted}`}>
-                            Correct: {sec.correct} • Wrong: {sec.wrong} • Skipped: {sec.skipped}
+                            Correct: {sec.correct} ï¿½ Wrong: {sec.wrong} ï¿½ Skipped: {sec.skipped}
                           </span>
                         </div>
                         <span className={`font-mono font-bold text-sm ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>
@@ -1285,7 +1285,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                   ) : (
                     inspectedStudent.violations.map((v, i) => (
                       <div key={i} className="text-red-600 bg-red-50 p-2 rounded border border-red-200">
-                        • [{v.timestamp}] {v.message}
+                        ï¿½ [{v.timestamp}] {v.message}
                       </div>
                     ))
                   )}
@@ -1777,8 +1777,8 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
             </div>
 
             <div className={`p-3.5 rounded-xl border text-xs space-y-1 ${subCardCls}`}>
-              <div>• Questions: <strong className={textPrimary}>{draftQuestions.length}</strong></div>
-              <div>• Total Marks: <strong className="text-amber-600">{draftQuestions.reduce((sum, q) => sum + (q.marks || 10), 0)} pts</strong></div>
+              <div>ï¿½ Questions: <strong className={textPrimary}>{draftQuestions.length}</strong></div>
+              <div>ï¿½ Total Marks: <strong className="text-amber-600">{draftQuestions.reduce((sum, q) => sum + (q.marks || 10), 0)} pts</strong></div>
             </div>
 
             <button
@@ -1822,7 +1822,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                     <div>
                       <span className={`font-bold block truncate max-w-[190px] ${textPrimary}`}>{q.title}</span>
                       <span className={`text-[11px] block font-mono ${textMuted}`}>
-                        {q.questions.length}Q • {q.questions.reduce((sum, item) => sum + (item.marks || 10), 0)} pts • {Object.keys(q.participants || {}).length} attended
+                        {q.questions.length}Q ï¿½ {q.questions.reduce((sum, item) => sum + (item.marks || 10), 0)} pts ï¿½ {Object.keys(q.participants || {}).length} attended
                       </span>
                     </div>
 
