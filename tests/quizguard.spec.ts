@@ -95,7 +95,10 @@ test.describe('QuizGuard Real-Time Examination & Proctoring Suite', () => {
     await studentPage.getByRole('button', { name: /Confirm Final Submit/i }).click();
 
     // 5-second countdown bar check
-    await expect(studentPage.getByText(/Transitioning to Thank You screen in/i)).toBeVisible();
+    // Click Close button to view Thank You screen
+    const closeBtn = studentPage.getByRole('button', { name: /Close/i });
+    await expect(closeBtn).toBeVisible({ timeout: 5000 });
+    await closeBtn.click();
 
     // Final celebration screen check
     await expect(studentPage.getByText('THANK YOU!')).toBeVisible({ timeout: 8000 });
