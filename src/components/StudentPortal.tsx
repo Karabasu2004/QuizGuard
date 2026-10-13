@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Quiz, Question, QuizSection, ThemeColor, SectionSummary, QuestionScoreDetail, StudentResult } from '../types';
 import { getSavedQuiz, applyGlobalTheme, subscribeToMessages, supabase, broadcastMessage } from '../supabase';
 import { 
@@ -942,7 +942,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
         <div className={`p-4 rounded-2xl border text-left space-y-2 text-xs font-mono max-h-48 overflow-y-auto ${subCardCls}`}>
           <span className={`block font-bold mb-1 ${textMuted}`}>Recorded Proctor Violations:</span>
           {violations.map((v, i) => (
-            <div key={i} className={isLight ? 'text-rose-600' : 'text-rose-400'}>• [{v.timestamp}] {v.message}</div>
+            <div key={i} className={isLight ? 'text-rose-600' : 'text-rose-400'}>� [{v.timestamp}] {v.message}</div>
           ))}
         </div>
       </div>
@@ -1048,7 +1048,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
             onClick={() => setShowThankYou(true)}
             className="underline ml-2 text-white/90 hover:text-white"
           >
-            Skip now →
+            Skip now ?
           </button>
         </div>
 
@@ -1073,7 +1073,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
           <div>
             <h2 className="text-2xl sm:text-3xl font-black">{quiz.title}</h2>
             <p className={`text-xs mt-1 font-mono ${textMuted}`}>
-              Candidate: <strong className={isLight ? 'text-blue-700' : 'text-cyan-300'}>{name}</strong> • Time Taken: {Math.floor(timeTaken / 60)}m {timeTaken % 60}s • ID: {participantId}
+              Candidate: <strong className={isLight ? 'text-blue-700' : 'text-cyan-300'}>{name}</strong> � Time Taken: {Math.floor(timeTaken / 60)}m {timeTaken % 60}s � ID: {participantId}
             </p>
           </div>
 
@@ -1118,13 +1118,13 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                   </div>
                   <div className="grid grid-cols-3 gap-1 pt-1 text-[11px] font-mono text-center">
                     <div className={`p-1 rounded border ${isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-emerald-950/40 text-emerald-300 border-emerald-900/40'}`}>
-                      ✓ {sec.correct}
+                      ? {sec.correct}
                     </div>
                     <div className={`p-1 rounded border ${isLight ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-rose-950/40 text-rose-300 border-rose-900/40'}`}>
-                      ✗ {sec.wrong}
+                      ? {sec.wrong}
                     </div>
                     <div className={`p-1 rounded border ${buttonSecCls}`}>
-                      — {sec.skipped}
+                      � {sec.skipped}
                     </div>
                   </div>
                 </div>
@@ -1144,7 +1144,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
       }`}>
         <h2 className="text-xl font-bold mb-2">{quiz.title}</h2>
         <span className={`text-xs font-mono block mb-4 ${isLight ? 'text-blue-700 font-bold' : 'text-cyan-400'}`}>
-          {quiz.mode === 'marks_challenge' ? `Marks Challenge • ${quiz.totalDurationMinutes || 20} Minutes Total` : 'Classic Proctored Assessment'}
+          {quiz.mode === 'marks_challenge' ? `Marks Challenge � ${quiz.totalDurationMinutes || 20} Minutes Total` : 'Classic Proctored Assessment'}
         </span>
 
         <div className={`p-4 rounded-xl mb-6 text-left border ${
@@ -1654,7 +1654,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
                 onClick={() => setShowSubmitModal(false)}
                 className={`flex-1 py-3 font-bold rounded-xl text-xs border transition ${buttonSecCls}`}
               >
-                ← Return to Test
+                ? Return to Test
               </button>
               <button
                 onClick={() => handleSubmit(false)}

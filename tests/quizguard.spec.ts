@@ -81,9 +81,9 @@ test.describe('QuizGuard Real-Time Examination & Proctoring Suite', () => {
     // Candidate selects the correct answer
     await studentPage.getByRole('button', { name: /Practical Byzantine Fault Tolerance/i }).click();
 
-    // Target the candidate specifically inside the scoreboard table (avoids the select dropdown conflict)
+    // Target the candidate specifically inside the scoreboard table and check for 2 / 2 pts
     await expect(hostPage.locator('table').getByText(candidateName)).toBeVisible({ timeout: 10000 });
-    await expect(hostPage.locator('table').getByText(/3 \/ 3 pts/i)).toBeVisible({ timeout: 10000 });
+    await expect(hostPage.locator('table').getByText(/2 \/ 2 pts/i)).toBeVisible({ timeout: 10000 });
 
     // --- PHASE 4: PROCTOR TRIGGER ---
     // Simulate tab switch / blur

@@ -1,4 +1,4 @@
-Ôªøimport React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Quiz, Question, QuestionType, QuizMode, QuizSection, StudentResult, ThemeColor, THEME_CONFIG, QuestionBankItem } from '../types';
 import { saveQuiz, supabase, subscribeToMessages, broadcastMessage } from '../supabase';
 import { PieChart } from './PieChart';
@@ -76,7 +76,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
   const [correctOpt, setCorrectOpt] = useState<number>(0);
   const [singleFibAnswer, setSingleFibAnswer] = useState('');
   
-  const [blankCount, setBlankCount] = useState<number>(3);
+  const [blankCount, setBlankCount] = useState<number>(2);
   const [blankAnswers, setBlankAnswers] = useState<string[]>(['', '', '']);
   const [qExplanation, setQExplanation] = useState('');
   const [qTimerClassic, setQTimerClassic] = useState<number>(60);
@@ -811,7 +811,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                 <input
                   type="password"
                   required
-                  placeholder="‚Ä¢‚Ä¢‚Ä¢‚Ä¢‚Ä¢‚Ä¢‚Ä¢‚Ä¢"
+                  placeholder="ïïïïïïïï"
                   value={loginPassword}
                   onChange={(e) => setLoginPassword(e.target.value)}
                   className={`w-full px-4 py-2.5 rounded-xl border text-sm focus:outline-none ${inputCls}`}
@@ -946,7 +946,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
     const lowScore = participantsList.filter(s => s.score < totalMax * 0.5).length;
 
     const scoreChartData = [
-      { label: 'High (‚â•80%)', value: highScore, color: '#7c3aed' },
+      { label: 'High (=80%)', value: highScore, color: '#7c3aed' },
       { label: 'Average (50-79%)', value: medScore, color: '#ea580c' },
       { label: 'Review (<50%)', value: lowScore, color: '#db2777' },
     ];
@@ -970,7 +970,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
             </div>
             <h1 className={`text-2xl font-black mt-1 ${textPrimary}`}>{activeQuiz.title}</h1>
             <p className={`text-xs ${textMuted}`}>
-              {activeQuiz.questions.length} Questions ‚Ä¢ Maximum Score: <span className={`font-mono font-bold ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>{totalMax} pts</span>
+              {activeQuiz.questions.length} Questions ï Maximum Score: <span className={`font-mono font-bold ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>{totalMax} pts</span>
             </p>
           </div>
 
@@ -1005,7 +1005,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                 isLight ? 'bg-blue-700 hover:bg-blue-800 text-white border-blue-700' : 'bg-blue-600 hover:bg-blue-500 text-white border-blue-500'
               }`}
             >
-              ‚Üê Back to Studio
+              ? Back to Studio
             </button>
           </div>
         </div>
@@ -1101,7 +1101,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
               <div className="space-y-1.5 max-h-36 overflow-y-auto">
                 {incidentLogs.map((log, idx) => (
                   <div key={idx} className="flex justify-between items-center text-rose-500">
-                    <span>‚Ä¢ [{log.timestamp}] <strong>{log.studentName}</strong>: {log.reason}</span>
+                    <span>ï [{log.timestamp}] <strong>{log.studentName}</strong>: {log.reason}</span>
                     <span className="font-bold">({log.strikes}/3 Strikes)</span>
                   </div>
                 ))}
@@ -1121,7 +1121,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
             <h3 className={`text-lg font-bold flex items-center gap-2 ${textPrimary}`}>
               <Trophy className="w-5 h-5 text-amber-500" /> Examination Scoreboard ({participantsList.length})
             </h3>
-            <span className={`text-xs font-mono ${textMuted}`}>Ranked by Score ‚Ä¢ Tie-breaker: Time</span>
+            <span className={`text-xs font-mono ${textMuted}`}>Ranked by Score ï Tie-breaker: Time</span>
           </div>
 
           <div className={`overflow-x-auto rounded-2xl border ${isLight ? 'border-slate-200' : 'border-slate-800'}`}>
@@ -1237,10 +1237,10 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                 <div>
                   <h3 className={`text-lg font-bold ${textPrimary}`}>Candidate Audit: {inspectedStudent.name}</h3>
                   <span className={`text-xs font-mono ${textMuted}`}>
-                    Score: {inspectedStudent.score}/{totalMax} pts ‚Ä¢ Time: {Math.floor((inspectedStudent.timeTakenSeconds || 0) / 60)}m {(inspectedStudent.timeTakenSeconds || 0) % 60}s
+                    Score: {inspectedStudent.score}/{totalMax} pts ï Time: {Math.floor((inspectedStudent.timeTakenSeconds || 0) / 60)}m {(inspectedStudent.timeTakenSeconds || 0) % 60}s
                   </span>
                 </div>
-                <button onClick={() => setInspectedStudent(null)} className={`text-xs ${textMuted} hover:${textPrimary}`}>‚úï Close</button>
+                <button onClick={() => setInspectedStudent(null)} className={`text-xs ${textMuted} hover:${textPrimary}`}>? Close</button>
               </div>
 
               <div className={`flex gap-2 border-b pb-2 text-xs ${isLight ? 'border-slate-200' : 'border-slate-800'}`}>
@@ -1266,7 +1266,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                         <div>
                           <strong className={`block ${textPrimary}`}>{sec.sectionName}</strong>
                           <span className={`text-[11px] font-mono ${textMuted}`}>
-                            Correct: {sec.correct} ‚Ä¢ Wrong: {sec.wrong} ‚Ä¢ Skipped: {sec.skipped}
+                            Correct: {sec.correct} ï Wrong: {sec.wrong} ï Skipped: {sec.skipped}
                           </span>
                         </div>
                         <span className={`font-mono font-bold text-sm ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>
@@ -1285,7 +1285,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                   ) : (
                     inspectedStudent.violations.map((v, i) => (
                       <div key={i} className="text-red-600 bg-red-50 p-2 rounded border border-red-200">
-                        ‚Ä¢ [{v.timestamp}] {v.message}
+                        ï [{v.timestamp}] {v.message}
                       </div>
                     ))
                   )}
@@ -1375,7 +1375,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                     onClick={() => setShowSectionConfig(!showSectionConfig)}
                     className={`text-xs font-mono font-bold ${isLight ? 'text-blue-700 hover:text-blue-800' : 'text-cyan-400 hover:text-cyan-300'}`}
                   >
-                    {showSectionConfig ? 'Hide Rules ‚ñ≤' : 'Customize Penalties ‚ñº'}
+                    {showSectionConfig ? 'Hide Rules ?' : 'Customize Penalties ?'}
                   </button>
                 </div>
 
@@ -1630,7 +1630,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                   <button type="submit" className={`px-5 py-2.5 font-bold rounded-xl text-xs border transition ${
                     isLight ? 'bg-blue-700 hover:bg-blue-800 text-white border-blue-700 shadow-sm' : 'bg-slate-800 hover:bg-slate-700 text-white border-slate-700'
                   }`}>
-                    {editingQuestionIndex !== null ? `‚úì Update Question #${editingQuestionIndex + 1}` : '+ Append Question to Assessment'}
+                    {editingQuestionIndex !== null ? `? Update Question #${editingQuestionIndex + 1}` : '+ Append Question to Assessment'}
                   </button>
                 </div>
               </div>
@@ -1777,8 +1777,8 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
             </div>
 
             <div className={`p-3.5 rounded-xl border text-xs space-y-1 ${subCardCls}`}>
-              <div>‚Ä¢ Questions: <strong className={textPrimary}>{draftQuestions.length}</strong></div>
-              <div>‚Ä¢ Total Marks: <strong className="text-amber-600">{draftQuestions.reduce((sum, q) => sum + (q.marks || 10), 0)} pts</strong></div>
+              <div>ï Questions: <strong className={textPrimary}>{draftQuestions.length}</strong></div>
+              <div>ï Total Marks: <strong className="text-amber-600">{draftQuestions.reduce((sum, q) => sum + (q.marks || 10), 0)} pts</strong></div>
             </div>
 
             <button
@@ -1822,7 +1822,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                     <div>
                       <span className={`font-bold block truncate max-w-[190px] ${textPrimary}`}>{q.title}</span>
                       <span className={`text-[11px] block font-mono ${textMuted}`}>
-                        {q.questions.length}Q ‚Ä¢ {q.questions.reduce((sum, item) => sum + (item.marks || 10), 0)} pts ‚Ä¢ {Object.keys(q.participants || {}).length} attended
+                        {q.questions.length}Q ï {q.questions.reduce((sum, item) => sum + (item.marks || 10), 0)} pts ï {Object.keys(q.participants || {}).length} attended
                       </span>
                     </div>
 
