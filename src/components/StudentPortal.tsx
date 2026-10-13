@@ -252,6 +252,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
   onExit, 
   isLight = false 
 }) => {
+  const [examStartTime, setExamStartTime] = useState<number>(() => Date.now());
+  const [showResultScreen, setShowResultScreen] = useState<boolean>(false);
+  const [showThankYouScreen, setShowThankYouScreen] = useState<boolean>(false);
   const [resolvedQuizId, setResolvedQuizId] = useState<string>(() => {
     const params = new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : ''));
     return params.get('quiz') || params.get('quizId') || quizIdFromUrl || propQuizId || '';
