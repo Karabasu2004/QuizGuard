@@ -65,10 +65,10 @@ test.describe('QuizGuard Real-Time Examination & Proctoring Suite', () => {
     await page.getByRole('button', { name: 'Submit Quiz' }).click();
     await page.getByRole('button', { name: /Confirm Final Submit/i }).click();
 
-    await expect(page.getByText('Assessment results for Timer Test Participant')).toBeVisible();
+    await expect(page.getByText('Academic Evaluation Statement')).toBeVisible();
     await page.getByRole('button', { name: 'Close' }).click();
+    await expect(page.getByText('Thank You!', { exact: true })).toBeVisible();
     await expect(page.getByText('Timer Test Participant', { exact: true })).toBeVisible();
-    await expect(page.getByText('THANK YOU!')).toHaveCount(0);
   });
 
   test('Host-Student dual sync, live scores, strikes, and submission', async ({ browser, baseURL }) => {

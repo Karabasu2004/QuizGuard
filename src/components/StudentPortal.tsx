@@ -328,7 +328,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
   
   const [liveProctorWarning, setLiveProctorWarning] = useState<string | null>(null);
 
-  const [showResultNotice, setShowResultNotice] = useState<boolean>(true);
+  const [showThankYou, setShowThankYou] = useState<boolean>(false);
   const [questionSecondsLeft, setQuestionSecondsLeft] = useState<number>(60);
 
   const [answers, setAnswers] = useState<Record<string, any>>(() => {
@@ -721,7 +721,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     });
 
     setIsFinished(true);
-    setShowResultNotice(true);
+    setShowThankYou(false);
     setIsAutoSubmitting(false);
 
     const studentResultObj: StudentResult = {
@@ -986,24 +986,41 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     );
   }
 
+  if (isFinished && showThankYou) {
+    return (
+      <div className={`max-w-xl mx-auto my-16 p-8 sm:p-14 border rounded-3xl text-center shadow-2xl space-y-6 animate-fade-in ${cardCls}`}>
+        <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white shadow-xl shadow-emerald-500/25">
+          <CheckCircle className="w-10 h-10" />
+        </div>
+        <div className="space-y-3">
+          <span className="text-xs font-mono font-bold tracking-widest uppercase text-emerald-500 block">
+            Assessment Submitted
+          </span>
+          <h1 className="text-4xl sm:text-6xl font-black tracking-tight">Thank You!</h1>
+          <p className={`text-sm sm:text-base leading-relaxed ${textMuted}`}>
+            Your responses have been successfully recorded and submitted to your institution.
+          </p>
+        </div>
+        <div className={`p-5 rounded-2xl border text-center space-y-1.5 ${subCardCls}`}>
+          <div className="flex justify-between items-center text-xs font-mono">
+            <span className={textMuted}>Candidate:</span>
+            <strong className={`font-bold ${textPrimary}`}>{name}</strong>
+          </div>
+          <div className="flex justify-between items-center text-xs font-mono">
+            <span className={textMuted}>Assessment:</span>
+            <strong className={`font-bold ${textPrimary}`}>{quiz.title}</strong>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (isFinished) {
     const totalMax = quiz.questions.reduce((sum, q) => sum + (q.marks || 10), 0);
     const percentage = totalMax > 0 ? ((score / totalMax) * 100).toFixed(1) : '0';
 
     return (
       <div className="max-w-4xl mx-auto my-8 space-y-8 animate-fade-in print:my-0 print:space-y-4">
-        {showResultNotice && (
-          <div className="p-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl text-center text-xs font-bold font-mono flex items-center justify-center gap-2 shadow-md">
-            <span>Assessment results for {name}</span>
-            <button
-              onClick={() => setShowResultNotice(false)}
-              className="ml-2 px-3 py-1 rounded-lg border border-white/50 hover:bg-white/10"
-            >
-              Close
-            </button>
-          </div>
-        )}
-
         <div className={`p-8 border rounded-3xl text-center shadow-2xl space-y-6 ${cardCls} print:shadow-none print:border-black print:p-4`}>
           <div className="flex justify-between items-center print:hidden">
             <span className={`text-xs font-mono uppercase font-bold tracking-widest ${isLight ? 'text-blue-700' : 'text-cyan-400'}`}>
@@ -1084,6 +1101,17 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
             </div>
           </div>
         )}
+
+        <div className="flex justify-center print:hidden">
+          <button
+            onClick={() => setShowThankYou(true)}
+            className={`px-8 py-3 rounded-xl text-sm font-bold transition text-white ${
+              isLight ? 'bg-blue-700 hover:bg-blue-800' : 'bg-cyan-600 hover:bg-cyan-500'
+            }`}
+          >
+            Close
+          </button>
+        </div>
       </div>
     );
   }
