@@ -253,6 +253,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
   isLight = false 
 }) => {
   const [quizId, setQuizId] = useState<string>(() => {
+  const [loading, setLoading] = useState<boolean>(true);
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       return params.get('quiz') || '';
