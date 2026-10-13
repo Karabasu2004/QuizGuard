@@ -921,6 +921,54 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
   if (loadingQuiz) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
+      {showResultScreen && !showThankYouScreen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 text-center shadow-2xl space-y-6">
+            <div className="w-16 h-16 mx-auto rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 text-3xl font-black">
+              ✓
+            </div>
+            <div>
+              <h2 className="text-2xl font-black text-white">Assessment Result</h2>
+              <p className="text-xs text-slate-400 mt-1">Your responses have been recorded</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 text-left">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-500">Score</span>
+                <p className="text-lg font-black text-cyan-400">
+                  {Object.keys(selectedAnswers).reduce((acc, idx) => {
+                    const q = quiz?.questions?.[Number(idx)];
+                    return acc + (q && selectedAnswers[Number(idx)] === q.correctOptionIndex ? (q.points || 2) : 0);
+                  }, 0)} / {(quiz?.questions?.length || 1) * 2} pts
+                </p>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-500">Accuracy</span>
+                <p className="text-sm font-semibold text-slate-200 mt-1">
+                  <span className="text-emerald-400">✓ Correct</span> | <span className="text-rose-400">✗ Wrong</span>
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                setShowResultScreen(false);
+                setShowThankYouScreen(true);
+              }}
+              className="w-full py-3 px-6 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-sm transition shadow-lg shadow-cyan-500/20"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showThankYouScreen && (
+        <div className="fixed inset-0 z-50 bg-slate-950 flex items-center justify-center p-4">
+          <div className="text-center space-y-4">
+            <h1 className="text-5xl font-black text-white tracking-tight">THANK YOU!</h1>
+            <p className="text-sm text-slate-400">Your examination session is complete. You may now safely close this window.</p>
+          </div>
+        </div>
+      )}
         <div className={`w-12 h-12 border-4 rounded-full animate-spin mb-4 ${isLight ? 'border-blue-600 border-t-transparent' : 'border-cyan-500 border-t-transparent'}`} />
         <p className={`font-medium ${textMuted}`}>Connecting to examination canvas...</p>
       </div>
