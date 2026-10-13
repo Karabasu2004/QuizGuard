@@ -1094,7 +1094,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
         {/* 5-Second Transition Countdown Bar */}
         <div className="p-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl text-center text-xs font-bold font-mono flex items-center justify-center gap-2 shadow-md">
           <Sparkles className="w-4 h-4 animate-spin" />
-          <span>Showing results... Transitioning to Thank You screen in {thankYouCountdown}s</span>
+          <span>Showing results... </span>
           <button 
             onClick={() => setShowThankYou(true)}
             className="underline ml-2 text-white/90 hover:text-white"
