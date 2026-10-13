@@ -791,7 +791,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
                 </div>
               )}
               <div>
-                <label className={`text-xs block mb-1.5 font-medium flex items-center gap-1.5 ${textMuted}`}>
+                <label className={`text-xs mb-1.5 font-medium flex items-center gap-1.5 ${textMuted}`}>
                   <Mail className={`w-3.5 h-3.5 ${isLight ? 'text-blue-700' : 'text-cyan-400'}`} /> Faculty Email
                 </label>
                 <input
@@ -805,7 +805,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
               </div>
 
               <div>
-                <label className={`text-xs block mb-1.5 font-medium flex items-center gap-1.5 ${textMuted}`}>
+                <label className={`text-xs mb-1.5 font-medium flex items-center gap-1.5 ${textMuted}`}>
                   <Lock className={`w-3.5 h-3.5 ${isLight ? 'text-blue-700' : 'text-cyan-400'}`} /> Password
                 </label>
                 <input
@@ -839,7 +839,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
               )}
 
               <div>
-                <label className={`text-xs block mb-1 font-medium flex items-center gap-1.5 ${textMuted}`}>
+                <label className={`text-xs mb-1 font-medium flex items-center gap-1.5 ${textMuted}`}>
                   <User className={`w-3.5 h-3.5 ${isLight ? 'text-blue-700' : 'text-cyan-400'}`} /> Full Name
                 </label>
                 <input
@@ -853,7 +853,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
               </div>
 
               <div>
-                <label className={`text-xs block mb-1 font-medium flex items-center gap-1.5 ${textMuted}`}>
+                <label className={`text-xs mb-1 font-medium flex items-center gap-1.5 ${textMuted}`}>
                   <Mail className={`w-3.5 h-3.5 ${isLight ? 'text-blue-700' : 'text-cyan-400'}`} /> Email Address
                 </label>
                 <input
@@ -867,7 +867,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
               </div>
 
               <div>
-                <label className={`text-xs block mb-1 font-medium flex items-center gap-1.5 ${textMuted}`}>
+                <label className={`text-xs mb-1 font-medium flex items-center gap-1.5 ${textMuted}`}>
                   <Lock className={`w-3.5 h-3.5 ${isLight ? 'text-blue-700' : 'text-cyan-400'}`} /> Password
                 </label>
                 <input
@@ -1422,7 +1422,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
             {/* Target Section Chooser */}
             {quizMode === 'marks_challenge' && (
               <div className="space-y-2">
-                <label className={`text-xs font-medium block flex items-center gap-1.5 ${textMuted}`}>
+                <label className={`text-xs font-medium flex items-center gap-1.5 ${textMuted}`}>
                   <Layers className={`w-3.5 h-3.5 ${isLight ? 'text-blue-700' : 'text-cyan-400'}`} /> Target Section for New Question:
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -1594,7 +1594,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
               )}
 
               <div>
-                <label className={`text-xs block mb-1 font-medium flex items-center gap-1.5 ${textMuted}`}>
+                <label className={`text-xs mb-1 font-medium flex items-center gap-1.5 ${textMuted}`}>
                   <HelpCircle className={`w-3.5 h-3.5 ${isLight ? 'text-blue-700' : 'text-cyan-400'}`} /> Answer Explanation (Shown after exam)
                 </label>
                 <input

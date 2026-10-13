@@ -260,11 +260,8 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     }
     return '';
   });
-  const [loading, setLoading] = useState<boolean>(true);
   const [quiz, setQuiz] = useState<any>(null);
   const [examStartTime, setExamStartTime] = useState<number>(() => Date.now());
-  const [showResultScreen, setShowResultScreen] = useState<boolean>(false);
-  const [showThankYouScreen, setShowThankYouScreen] = useState<boolean>(false);
 
   const [resolvedQuizId, setResolvedQuizId] = useState<string>(() => {
     const params = new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : ''));
@@ -813,228 +810,51 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300' 
     : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700';
 
-  if (loadingQuiz) {
-    useEffect(() => {
+  useEffect(() => {
     let active = true;
+    const targetQuizId = resolvedQuizId || quizId || propQuizId || quizIdFromUrl || '';
 
-    // Read quiz ID directly from URL if state is blank
-    const targetQuizId = quizId || new URLSearchParams(window.location.search).get('quiz') || '';
     if (!targetQuizId) {
       console.warn('[QuizGuard] No quiz parameter found in URL.');
-      setLoading(false);
-      return;
+      setLoadingQuiz(false);
+      return () => {
+        active = false;
+      };
     }
 
+    setLoadingQuiz(true);
     console.log('[QuizGuard] Loading assessment:', targetQuizId);
 
     const loadAssessment = async () => {
       try {
-        // 1. Try fetching from Supabase
-        if (typeof supabase !== 'undefined' && supabase) {
-          const { data, error } = await supabase
-            .from('quizzes')
-            .select('*')
-            .eq('id', targetQuizId)
-            .maybeSingle();
+        const savedQuiz = await getSavedQuiz(targetQuizId);
+        if (!active) return;
 
-          if (!error && data && active) {
-            console.log('[QuizGuard] Successfully loaded quiz from Supabase:', data.title || data.id);
-            setQuiz(data);
-            setLoading(false);
-            return;
-          }
+        if (savedQuiz) {
+          setQuiz(savedQuiz);
+        } else {
+          console.warn('[QuizGuard] Quiz not found in database or local storage.');
         }
-
-        // 2. Fallback to localStorage
-        const localDirect = localStorage.getItem(targetQuizId);
-        const localQuizzes = localStorage.getItem('quizzes');
-        let matchedQuiz = null;
-
-        if (localDirect) {
-          try { matchedQuiz = JSON.parse(localDirect); } catch(e){}
-        } else if (localQuizzes) {
-          try {
-            const list = JSON.parse(localQuizzes);
-            if (Array.isArray(list)) {
-              matchedQuiz = list.find((q: any) => q.id === targetQuizId);
-            }
-          } catch(e){}
-        }
-
-        if (matchedQuiz && active) {
-          console.log('[QuizGuard] Successfully loaded quiz from local storage fallback:', matchedQuiz.title || matchedQuiz.id);
-          setQuiz(matchedQuiz);
-          setLoading(false);
-          return;
-        }
-
-        console.warn('[QuizGuard] Quiz not found in database or local storage.');
       } catch (err) {
         console.error('[QuizGuard] Unexpected error while fetching quiz:', err);
       } finally {
         if (active) {
-          setLoading(false); // ALWAYS release loading screen
+          setLoadingQuiz(false);
         }
       }
     };
 
-    loadAssessment();
-
-    // 3. Watchdog timeout: release loading spinner after 4 seconds under all circumstances
-    const timeoutWatchdog = setTimeout(() => {
-      if (active) {
-        console.warn('[QuizGuard] Watchdog timeout triggered: releasing loader.');
-        setLoading(false);
-      }
-    }, 4000);
-
-    return () => {
-      active = false;
-      clearTimeout(timeoutWatchdog);
-    };
-  }, [quizId]);
-
-  useEffect(() => {
-    let active = true;
-    const targetQuizId = quizId || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('quiz') : '') || '';
-
-    if (!targetQuizId) {
-      console.warn('[QuizGuard] No quiz parameter in URL.');
-      setLoading(false);
-      return;
-    }
-
-    console.log('[QuizGuard] Fast-loading assessment:', targetQuizId);
-
-    // STEP 1: INSTANT LOCAL SEARCH (0ms - Loads immediately on host/local browser)
-    try {
-      // Direct key lookup
-      const direct = localStorage.getItem(targetQuizId);
-      if (direct) {
-        const parsed = JSON.parse(direct);
-        if (parsed && active) {
-          console.log('[QuizGuard] Loaded instantly from direct local storage.');
-          setQuiz(parsed);
-          setLoading(false);
-          return;
-        }
-      }
-
-      // Scan all localStorage entries for matching quiz ID
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key) {
-          try {
-            const raw = localStorage.getItem(key);
-            if (raw && (raw.startsWith('{') || raw.startsWith('['))) {
-              const parsed = JSON.parse(raw);
-              if (Array.isArray(parsed)) {
-                const found = parsed.find((item: any) => item && (item.id === targetQuizId || item.quizId === targetQuizId));
-                if (found && active) {
-                  console.log('[QuizGuard] Loaded instantly from local array cache:', key);
-                  setQuiz(found);
-                  setLoading(false);
-                  return;
-                }
-              } else if (parsed && (parsed.id === targetQuizId || parsed.quizId === targetQuizId)) {
-                if (active) {
-                  console.log('[QuizGuard] Loaded instantly from local object cache:', key);
-                  setQuiz(parsed);
-                  setLoading(false);
-                  return;
-                }
-              }
-            }
-          } catch (e) {}
-        }
-      }
-    } catch (err) {
-      console.warn('[QuizGuard] Local storage read error:', err);
-    }
-
-    // STEP 2: SUPABASE NETWORK FETCH (For external students on separate devices)
-    const fetchRemote = async () => {
-      try {
-        if (typeof supabase !== 'undefined' && supabase) {
-          const { data, error } = await supabase
-            .from('quizzes')
-            .select('*')
-            .eq('id', targetQuizId)
-            .maybeSingle();
-
-          if (!error && data && active) {
-            console.log('[QuizGuard] Loaded assessment from Supabase database.');
-            setQuiz(data);
-            setLoading(false);
-            return;
-          }
-        }
-      } catch (err) {
-        console.error('[QuizGuard] Supabase fetch error:', err);
-      } finally {
-        if (active) {
-          setLoading(false);
-        }
-      }
-    };
-
-    fetchRemote();
+    void loadAssessment();
 
     return () => {
       active = false;
     };
-  }, [quizId]);
+  }, [propQuizId, quizId, quizIdFromUrl, resolvedQuizId]);
+
+  if (loadingQuiz) {
 
   return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
-      {showResultScreen && !showThankYouScreen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 text-center shadow-2xl space-y-6">
-            <div className="w-16 h-16 mx-auto rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 text-3xl font-black">
-              ✓
-            </div>
-            <div>
-              <h2 className="text-2xl font-black text-white">Assessment Result</h2>
-              <p className="text-xs text-slate-400 mt-1">Your responses have been recorded</p>
-            </div>
-            <div className="grid grid-cols-2 gap-3 bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80 text-left">
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-500">Score</span>
-                <p className="text-lg font-black text-cyan-400">
-                  {Object.keys(selectedAnswers).reduce((acc, idx) => {
-                    const q = quiz?.questions?.[Number(idx)];
-                    return acc + (q && selectedAnswers[Number(idx)] === q.correctOptionIndex ? (q.points || 2) : 0);
-                  }, 0)} / {(quiz?.questions?.length || 1) * 2} pts
-                </p>
-              </div>
-              <div>
-                <span className="text-[10px] uppercase font-bold text-slate-500">Accuracy</span>
-                <p className="text-sm font-semibold text-slate-200 mt-1">
-                  <span className="text-emerald-400">✓ Correct</span> | <span className="text-rose-400">✗ Wrong</span>
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => {
-                setShowResultScreen(false);
-                setShowThankYouScreen(true);
-              }}
-              className="w-full py-3 px-6 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-sm transition shadow-lg shadow-cyan-500/20"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-
-      {showThankYouScreen && (
-        <div className="fixed inset-0 z-50 bg-slate-950 flex items-center justify-center p-4">
-          <div className="text-center space-y-4">
-            <h1 className="text-5xl font-black text-white tracking-tight">THANK YOU!</h1>
-            <p className="text-sm text-slate-400">Your examination session is complete. You may now safely close this window.</p>
-          </div>
-        </div>
-      )}
         <div className={`w-12 h-12 border-4 rounded-full animate-spin mb-4 ${isLight ? 'border-blue-600 border-t-transparent' : 'border-cyan-500 border-t-transparent'}`} />
         <p className={`font-medium ${textMuted}`}>Connecting to examination canvas...</p>
       </div>

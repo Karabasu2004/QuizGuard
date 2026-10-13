@@ -1,6 +1,36 @@
 ﻿import { test, expect } from '@playwright/test';
 
 test.describe('QuizGuard Real-Time Examination & Proctoring Suite', () => {
+  test('Student link loads a cached assessment instead of staying on the loader', async ({ page, baseURL }) => {
+    const targetUrl = process.env.TEST_URL || baseURL || 'http://localhost:5173';
+    const quizId = 'loader-regression-fixture';
+    const quiz = {
+      id: quizId,
+      hostEmail: 'fixture@test.edu',
+      title: 'Loader Regression Assessment',
+      createdAt: new Date().toISOString(),
+      mode: 'classic',
+      pacingMode: 'manual',
+      theme: 'slate',
+      questions: [{
+        id: 'question-1',
+        type: 'mcq',
+        text: 'Fixture question',
+        options: ['A', 'B', 'C', 'D'],
+        correctAnswer: 0,
+      }],
+      status: 'live',
+      participants: {},
+    };
+
+    await page.addInitScript(({ id, savedQuiz }) => {
+      localStorage.setItem(`quizguard_quiz_${id}`, JSON.stringify(savedQuiz));
+    }, { id: quizId, savedQuiz: quiz });
+
+    await page.goto(`${targetUrl}?quiz=${quizId}`);
+    await expect(page.getByText(quiz.title, { exact: true })).toBeVisible({ timeout: 5000 });
+  });
+
   test('Host-Student dual sync, live scores, strikes, and submission', async ({ browser, baseURL }) => {
     const targetUrl = process.env.TEST_URL || baseURL || 'http://localhost:5173';
 
