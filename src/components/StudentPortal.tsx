@@ -252,18 +252,20 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
   onExit, 
   isLight = false 
 }) => {
+  // --- CORE EXAM & URL STATES ---
   const [quizId, setQuizId] = useState<string>(() => {
-  const [loading, setLoading] = useState<boolean>(true);
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       return params.get('quiz') || '';
     }
     return '';
   });
-
+  const [loading, setLoading] = useState<boolean>(true);
+  const [quiz, setQuiz] = useState<any>(null);
   const [examStartTime, setExamStartTime] = useState<number>(() => Date.now());
   const [showResultScreen, setShowResultScreen] = useState<boolean>(false);
   const [showThankYouScreen, setShowThankYouScreen] = useState<boolean>(false);
+
   const [resolvedQuizId, setResolvedQuizId] = useState<string>(() => {
     const params = new URLSearchParams(window.location.search || (window.location.hash.includes('?') ? window.location.hash.split('?')[1] : ''));
     return params.get('quiz') || params.get('quizId') || quizIdFromUrl || propQuizId || '';
@@ -297,7 +299,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
 
   const initialSession = getStoredSession();
 
-  const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [loadingQuiz, setLoadingQuiz] = useState<boolean>(true);
 
   const [name, setName] = useState<string>(() => {
