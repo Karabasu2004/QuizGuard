@@ -107,25 +107,30 @@ export const getSavedQuiz = async (id: string): Promise<Quiz | null> => {
         if (typeof parsedQuestions === 'string') {
           try { parsedQuestions = JSON.parse(parsedQuestions); } catch (e) { parsedQuestions = []; }
         }
+        const questions = Array.isArray(parsedQuestions) ? parsedQuestions : [];
+        const mode = data.mode === 'classic'
+          || (data.mode !== 'marks_challenge' && questions.length > 0 && questions.every((question: any) => !question.sectionId))
+          ? 'classic'
+          : 'marks_challenge';
 
         return {
           id: data.id,
           hostEmail: data.host_email || '',
           title: data.title,
           createdAt: data.created_at || new Date().toLocaleString(),
-          mode: 'marks_challenge',
-          totalDurationMinutes: 20,
-          sections: [
+          mode,
+          totalDurationMinutes: mode === 'marks_challenge' ? data.total_duration_minutes || 20 : undefined,
+          sections: mode === 'marks_challenge' ? [
             { id: 'sec_3m', name: 'Section A (3M)', marksPerQuestion: 3, negativeMarkingEnabled: true, negativeMarking: 1 },
             { id: 'sec_5m', name: 'Section B (5M)', marksPerQuestion: 5, negativeMarkingEnabled: true, negativeMarking: 1 },
             { id: 'sec_7m', name: 'Section C (7M)', marksPerQuestion: 7, negativeMarkingEnabled: true, negativeMarking: 2 },
             { id: 'sec_10m', name: 'Section D (10M)', marksPerQuestion: 10, negativeMarkingEnabled: true, negativeMarking: 2 },
-          ],
+          ] : undefined,
           shuffleQuestions: true,
           shuffleOptions: true,
           pacingMode: data.pacing_mode || 'manual',
           theme: data.theme || 'slate',
-          questions: Array.isArray(parsedQuestions) ? parsedQuestions : [],
+          questions,
           status: data.status || 'live',
           participants: {}
         };

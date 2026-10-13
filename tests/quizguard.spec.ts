@@ -1,4 +1,6 @@
-﻿import { test, expect } from '@playwright/test';
+declare const process: { env: { TEST_URL?: string } };
+
+import { test, expect } from '@playwright/test';
 
 test.describe('QuizGuard Real-Time Examination & Proctoring Suite', () => {
   test('Student link loads a cached assessment instead of staying on the loader', async ({ page, baseURL }) => {
@@ -29,6 +31,44 @@ test.describe('QuizGuard Real-Time Examination & Proctoring Suite', () => {
 
     await page.goto(`${targetUrl}?quiz=${quizId}`);
     await expect(page.getByText(quiz.title, { exact: true })).toBeVisible({ timeout: 5000 });
+  });
+
+  test('Classic mode gives one minute per question and keeps results visible after Close', async ({ page, baseURL }) => {
+    const targetUrl = process.env.TEST_URL || baseURL || 'http://localhost:5173';
+    const quizId = 'classic-mode-timer-fixture';
+    const quiz = {
+      id: quizId,
+      hostEmail: 'fixture@test.edu',
+      title: 'Classic Timer Assessment',
+      createdAt: new Date().toISOString(),
+      mode: 'classic',
+      pacingMode: 'manual',
+      theme: 'slate',
+      questions: [
+        { id: 'question-1', type: 'mcq', text: 'First fixture question', options: ['A', 'B', 'C', 'D'], correctAnswer: 0 },
+        { id: 'question-2', type: 'mcq', text: 'Second fixture question', options: ['A', 'B', 'C', 'D'], correctAnswer: 1 },
+      ],
+      status: 'live',
+      participants: {},
+    };
+
+    await page.addInitScript(({ id, savedQuiz }) => {
+      localStorage.setItem(`quizguard_quiz_${id}`, JSON.stringify(savedQuiz));
+    }, { id: quizId, savedQuiz: quiz });
+
+    await page.goto(`${targetUrl}?quiz=${quizId}`);
+    await expect(page.getByText(/Classic Proctored Assessment.*1 Minute per Question/)).toBeVisible();
+    await page.getByRole('textbox').fill('Timer Test Participant');
+    await page.getByRole('button', { name: /Enter Fullscreen & Start Exam/i }).click();
+
+    await expect(page.getByText('01:00')).toBeVisible();
+    await page.getByRole('button', { name: 'Submit Quiz' }).click();
+    await page.getByRole('button', { name: /Confirm Final Submit/i }).click();
+
+    await expect(page.getByText('Assessment results for Timer Test Participant')).toBeVisible();
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(page.getByText('Timer Test Participant', { exact: true })).toBeVisible();
+    await expect(page.getByText('THANK YOU!')).toHaveCount(0);
   });
 
   test('Host-Student dual sync, live scores, strikes, and submission', async ({ browser, baseURL }) => {

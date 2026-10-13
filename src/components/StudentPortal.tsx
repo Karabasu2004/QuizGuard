@@ -5,7 +5,7 @@ import {
   ShieldAlert, CheckCircle, AlertTriangle, Maximize, Clock, Trophy, 
   AlertOctagon, Edit3, Award, Bookmark, Flag, ArrowRight, ArrowLeft, 
   RotateCcw, Check, Layers, Loader2, Menu, X, AlertCircle, HelpCircle, BarChart3, RefreshCw,
-  Printer, BellRing, Sparkles
+  Printer, BellRing
 } from 'lucide-react';
 
 interface StudentPortalProps {
@@ -111,7 +111,9 @@ const evaluateQuizAnswers = (quiz: Quiz, answers: Record<string, any>) => {
   let totalWrong = 0;
   let totalSkipped = 0;
 
-  const sectionMap = new Map((quiz.sections || []).map((s) => [s.id, s]));
+  const sectionMap = new Map<string, QuizSection>(
+    (quiz.sections || []).map((section: QuizSection) => [section.id, section])
+  );
   const calculatedSummaries: Record<string, SectionSummary> = {};
   const calculatedDetails: Record<string, QuestionScoreDetail> = {};
 
@@ -326,9 +328,8 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
   
   const [liveProctorWarning, setLiveProctorWarning] = useState<string | null>(null);
 
-  // 5-Second Countdown and Thank You states
-  const [showThankYou, setShowThankYou] = useState<boolean>(false);
-  const [thankYouCountdown, setThankYouCountdown] = useState<number>(5);
+  const [showResultNotice, setShowResultNotice] = useState<boolean>(true);
+  const [questionSecondsLeft, setQuestionSecondsLeft] = useState<number>(60);
 
   const [answers, setAnswers] = useState<Record<string, any>>(() => {
     if (!resolvedQuizId) return {};
@@ -574,7 +575,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
       setTotalSecondsLeft(remaining);
       setTimeTaken(elapsed);
 
-      if (remaining <= 0 && !hasAutoSubmitted.current) {
+      if (remaining <= 0 && quiz?.mode !== 'classic' && !hasAutoSubmitted.current) {
         hasAutoSubmitted.current = true;
         setIsAutoSubmitting(true);
         setTimeout(() => {
@@ -586,7 +587,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     computeTime();
     const interval = setInterval(computeTime, 1000);
     return () => clearInterval(interval);
-  }, [isJoined, isFinished, disqualified, isAssessmentStopped, startedAtTimestamp, totalDurationSec]);
+  }, [isJoined, isFinished, disqualified, isAssessmentStopped, startedAtTimestamp, totalDurationSec, quiz?.mode]);
 
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -606,7 +607,12 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
 
     const existing = getStoredSession();
     const startMs = existing?.startedAt || Date.now();
-    const durationSec = totalDurationSec || 1200;
+    const durationSec = quiz.mode === 'classic'
+      ? Math.max(1, quiz.questions.length) * 60
+      : totalDurationSec || (quiz.totalDurationMinutes || 20) * 60;
+    const elapsed = Math.floor((Date.now() - startMs) / 1000);
+    setTotalDurationSec(durationSec);
+    setTotalSecondsLeft(Math.max(0, durationSec - elapsed));
 
     const newSession: StoredExamSession = {
       participantId,
@@ -715,7 +721,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     });
 
     setIsFinished(true);
-    setThankYouCountdown(5);
+    setShowResultNotice(true);
     setIsAutoSubmitting(false);
 
     const studentResultObj: StudentResult = {
@@ -787,6 +793,69 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
       }
     }
   };
+
+  const handleSubmitRef = useRef(handleSubmit);
+  handleSubmitRef.current = handleSubmit;
+
+  useEffect(() => {
+    if (!quiz || quiz.mode !== 'classic') return;
+
+    const durationSeconds = Math.max(1, quiz.questions.length) * 60;
+    setTotalDurationSec(durationSeconds);
+
+    if (startedAtTimestamp) {
+      const remaining = Math.max(0, durationSeconds - Math.floor((Date.now() - startedAtTimestamp) / 1000));
+      setTotalSecondsLeft(remaining);
+    } else {
+      setTotalSecondsLeft(durationSeconds);
+    }
+
+    const session = getStoredSession();
+    if (session) {
+      localStorage.setItem(
+        `quizguard_session_${resolvedQuizId}`,
+        JSON.stringify({ ...session, totalDurationSeconds: durationSeconds })
+      );
+    }
+  }, [quiz, resolvedQuizId, startedAtTimestamp]);
+
+  useEffect(() => {
+    if (!quiz || quiz.mode !== 'classic' || !isJoined || isFinished || disqualified || isAssessmentStopped) return;
+
+    const deadlineKey = `quizguard_question_deadline_${resolvedQuizId}_${participantId}_${currentIdx}`;
+    const storedDeadline = Number(localStorage.getItem(deadlineKey));
+    const deadline = storedDeadline || Date.now() + 60_000;
+    if (!storedDeadline) {
+      localStorage.setItem(deadlineKey, String(deadline));
+    }
+
+    let expired = false;
+    const updateQuestionTimer = () => {
+      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      setQuestionSecondsLeft(remaining);
+
+      if (remaining === 0 && !expired) {
+        expired = true;
+        if (currentIdx < quiz.questions.length - 1) {
+          const nextIndex = currentIdx + 1;
+          setCurrentIdx(nextIndex);
+          localStorage.setItem(`quizguard_current_idx_${resolvedQuizId}`, String(nextIndex));
+          setVisitedIndices((previous) => {
+            const updated = { ...previous, [nextIndex]: true };
+            localStorage.setItem(`quizguard_visited_${resolvedQuizId}`, JSON.stringify(updated));
+            return updated;
+          });
+          setIsPaletteOpenMobile(false);
+        } else {
+          void handleSubmitRef.current(true);
+        }
+      }
+    };
+
+    updateQuestionTimer();
+    const interval = window.setInterval(updateQuestionTimer, 1000);
+    return () => window.clearInterval(interval);
+  }, [currentIdx, disqualified, isAssessmentStopped, isFinished, isJoined, participantId, quiz, resolvedQuizId]);
 
   const handlePrintScorecard = () => {
     window.print();
@@ -917,74 +986,23 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     );
   }
 
-  // Stylish "THANK YOU" Screen without score, completion time, or retake exam button
-  if (isFinished && showThankYou) {
-    return (
-      <div className="max-w-xl mx-auto my-16 p-8 sm:p-14 border rounded-3xl text-center shadow-2xl space-y-6 animate-fade-in relative overflow-hidden transition-colors"
-        style={{
-          background: isLight 
-            ? 'linear-gradient(135deg, #ffffff 0%, #f8fafc 100%)' 
-            : 'linear-gradient(135deg, #0f172a 0%, #020617 100%)',
-          borderColor: isLight ? '#cbd5e1' : '#1e293b'
-        }}
-      >
-        <div className="w-20 h-20 mx-auto rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white shadow-xl shadow-emerald-500/25 animate-bounce">
-          <Sparkles className="w-10 h-10" />
-        </div>
-
-        <div className="space-y-3">
-          <span className="text-xs font-mono font-bold tracking-widest uppercase text-emerald-500 block">
-            Assessment Submitted
-          </span>
-          <h1 className="text-4xl sm:text-6xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400">
-            THANK YOU!
-          </h1>
-          <p className={`text-sm sm:text-base leading-relaxed ${textMuted} max-w-sm mx-auto`}>
-            Your responses have been successfully recorded and submitted to your institution.
-          </p>
-        </div>
-
-        <div className={`p-5 rounded-2xl border text-center space-y-1.5 ${subCardCls}`}>
-          <div className="flex justify-between items-center text-xs font-mono">
-            <span className={textMuted}>Candidate:</span>
-            <strong className={`font-bold ${textPrimary}`}>{name}</strong>
-          </div>
-          <div className="flex justify-between items-center text-xs font-mono">
-            <span className={textMuted}>Assessment:</span>
-            <strong className={`font-bold ${textPrimary}`}>{quiz.title}</strong>
-          </div>
-        </div>
-
-        <div className="pt-2">
-          <button
-            onClick={() => setShowThankYou(false)}
-            className={`w-full py-3.5 rounded-xl text-xs font-bold border transition ${buttonSecCls}`}
-          >
-            Review Question Answers & Explanations
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // Initial 5-Second Scorecard Screen
   if (isFinished) {
     const totalMax = quiz.questions.reduce((sum, q) => sum + (q.marks || 10), 0);
     const percentage = totalMax > 0 ? ((score / totalMax) * 100).toFixed(1) : '0';
 
     return (
       <div className="max-w-4xl mx-auto my-8 space-y-8 animate-fade-in print:my-0 print:space-y-4">
-        {/* 5-Second Transition Countdown Bar */}
-        <div className="p-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl text-center text-xs font-bold font-mono flex items-center justify-center gap-2 shadow-md">
-          <Sparkles className="w-4 h-4 animate-spin" />
-          <span>Showing results... </span>
-          <button 
-            onClick={() => setShowThankYou(true)}
-            className="underline ml-2 text-white/90 hover:text-white"
-          >
-            Skip now ?
-          </button>
-        </div>
+        {showResultNotice && (
+          <div className="p-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl text-center text-xs font-bold font-mono flex items-center justify-center gap-2 shadow-md">
+            <span>Assessment results for {name}</span>
+            <button
+              onClick={() => setShowResultNotice(false)}
+              className="ml-2 px-3 py-1 rounded-lg border border-white/50 hover:bg-white/10"
+            >
+              Close
+            </button>
+          </div>
+        )}
 
         <div className={`p-8 border rounded-3xl text-center shadow-2xl space-y-6 ${cardCls} print:shadow-none print:border-black print:p-4`}>
           <div className="flex justify-between items-center print:hidden">
@@ -1078,7 +1096,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
       }`}>
         <h2 className="text-xl font-bold mb-2">{quiz.title}</h2>
         <span className={`text-xs font-mono block mb-4 ${isLight ? 'text-blue-700 font-bold' : 'text-cyan-400'}`}>
-          {quiz.mode === 'marks_challenge' ? `Marks Challenge � ${quiz.totalDurationMinutes || 20} Minutes Total` : 'Classic Proctored Assessment'}
+          {quiz.mode === 'marks_challenge' ? `Marks Challenge � ${quiz.totalDurationMinutes || 20} Minutes Total` : 'Classic Proctored Assessment � 1 Minute per Question'}
         </span>
 
         <div className={`p-4 rounded-xl mb-6 text-left border ${
@@ -1125,7 +1143,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
   }
 
   const currentQ = quiz.questions[currentIdx] || quiz.questions[0];
-  const sectionMap = new Map((quiz.sections || []).map((s) => [s.id, s]));
+  const sectionMap = new Map<string, QuizSection>(
+    (quiz.sections || []).map((section: QuizSection) => [section.id, section])
+  );
   const currentSec = currentQ?.sectionId ? sectionMap.get(currentQ.sectionId) : undefined;
 
   const isQuestionAnswered = (q: Question) => {
@@ -1153,8 +1173,11 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
   const flaggedCount = Object.values(reviewFlags).filter(Boolean).length;
   const notVisitedCount = quiz.questions.filter((_, idx) => !visitedIndices[idx]).length;
 
-  const isTimerCritical = totalSecondsLeft <= 60;
-  const isTimerWarning = totalSecondsLeft <= 300 && totalSecondsLeft > 60;
+  const displayedSecondsLeft = quiz.mode === 'classic' ? questionSecondsLeft : totalSecondsLeft;
+  const isTimerCritical = quiz.mode === 'classic' ? displayedSecondsLeft <= 10 : totalSecondsLeft <= 60;
+  const isTimerWarning = quiz.mode === 'classic'
+    ? displayedSecondsLeft <= 60 && displayedSecondsLeft > 10
+    : totalSecondsLeft <= 300 && totalSecondsLeft > 60;
 
   const groupedSections: Record<string, { section?: QuizSection; questions: Array<{ q: Question; originalIdx: number }> }> = {};
 
@@ -1231,7 +1254,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
           }`}>
             <Clock className={`w-4 h-4 ${isTimerCritical ? 'animate-spin' : ''}`} />
             <span>
-              {Math.floor(totalSecondsLeft / 60).toString().padStart(2, '0')}:{(totalSecondsLeft % 60).toString().padStart(2, '0')}
+              {Math.floor(displayedSecondsLeft / 60).toString().padStart(2, '0')}:{(displayedSecondsLeft % 60).toString().padStart(2, '0')}
             </span>
           </div>
 

@@ -79,7 +79,7 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
   const [blankCount, setBlankCount] = useState<number>(2);
   const [blankAnswers, setBlankAnswers] = useState<string[]>(['', '', '']);
   const [qExplanation, setQExplanation] = useState('');
-  const [qTimerClassic, setQTimerClassic] = useState<number>(2);
+  const [qTimerClassic, setQTimerClassic] = useState<number>(1);
   const [customClassicMarks, setCustomClassicMarks] = useState<number>(2);
   const [saveAlsoToBank, setSaveAlsoToBank] = useState<boolean>(false);
 
@@ -575,7 +575,9 @@ export const HostDashboard: React.FC<HostProps> = ({ onLogout, isLight = false }
       shuffleOptions,
       pacingMode,
       theme: 'slate',
-      questions: currentDrafts,
+      questions: quizMode === 'classic'
+        ? currentDrafts.map((question) => ({ ...question, sectionId: undefined }))
+        : currentDrafts,
       status: 'live',
       participants: existingQuiz ? existingQuiz.participants : {},
     };
