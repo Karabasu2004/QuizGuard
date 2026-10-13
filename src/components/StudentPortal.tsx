@@ -894,6 +894,97 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
     };
   }, [quizId]);
 
+  useEffect(() => {
+    let active = true;
+    const targetQuizId = quizId || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('quiz') : '') || '';
+
+    if (!targetQuizId) {
+      console.warn('[QuizGuard] No quiz parameter in URL.');
+      setLoading(false);
+      return;
+    }
+
+    console.log('[QuizGuard] Fast-loading assessment:', targetQuizId);
+
+    // STEP 1: INSTANT LOCAL SEARCH (0ms - Loads immediately on host/local browser)
+    try {
+      // Direct key lookup
+      const direct = localStorage.getItem(targetQuizId);
+      if (direct) {
+        const parsed = JSON.parse(direct);
+        if (parsed && active) {
+          console.log('[QuizGuard] Loaded instantly from direct local storage.');
+          setQuiz(parsed);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Scan all localStorage entries for matching quiz ID
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key) {
+          try {
+            const raw = localStorage.getItem(key);
+            if (raw && (raw.startsWith('{') || raw.startsWith('['))) {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed)) {
+                const found = parsed.find((item: any) => item && (item.id === targetQuizId || item.quizId === targetQuizId));
+                if (found && active) {
+                  console.log('[QuizGuard] Loaded instantly from local array cache:', key);
+                  setQuiz(found);
+                  setLoading(false);
+                  return;
+                }
+              } else if (parsed && (parsed.id === targetQuizId || parsed.quizId === targetQuizId)) {
+                if (active) {
+                  console.log('[QuizGuard] Loaded instantly from local object cache:', key);
+                  setQuiz(parsed);
+                  setLoading(false);
+                  return;
+                }
+              }
+            }
+          } catch (e) {}
+        }
+      }
+    } catch (err) {
+      console.warn('[QuizGuard] Local storage read error:', err);
+    }
+
+    // STEP 2: SUPABASE NETWORK FETCH (For external students on separate devices)
+    const fetchRemote = async () => {
+      try {
+        if (typeof supabase !== 'undefined' && supabase) {
+          const { data, error } = await supabase
+            .from('quizzes')
+            .select('*')
+            .eq('id', targetQuizId)
+            .maybeSingle();
+
+          if (!error && data && active) {
+            console.log('[QuizGuard] Loaded assessment from Supabase database.');
+            setQuiz(data);
+            setLoading(false);
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('[QuizGuard] Supabase fetch error:', err);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchRemote();
+
+    return () => {
+      active = false;
+    };
+  }, [quizId]);
+
   return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
       {showResultScreen && !showThankYouScreen && (
